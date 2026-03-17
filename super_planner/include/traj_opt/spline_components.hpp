@@ -2,10 +2,13 @@
 
 #include "traj_opt/spline/SplineOptimizer.hpp"
 
+#include <TrajectoryOptComponents/LinearTimeCost.hpp>
+#include <TrajectoryOptComponents/PenaltyUtils.hpp>
+#include <TrajectoryOptComponents/PolytopeSpatialMap.hpp>
+#include <TrajectoryOptComponents/TimeMapUtils.hpp>
 #include <data_structure/base/trajectory.h>
 #include <utils/geometry/quadrotor_flatness.hpp>
 #include <utils/header/type_utils.hpp>
-#include <utils/optimization/optimization_utils.h>
 
 #include <algorithm>
 #include <cmath>
@@ -27,7 +30,8 @@ using SepticSpline = SplineTrajectory::SepticSplineND<3>;
 using BoundaryConditions = SplineTrajectory::BoundaryConditions<3>;
 using SepticGradients = typename SepticSpline::Gradients;
 using WaypointsType = typename SepticSpline::MatrixType;
-using DenseGcopter = optimization_utils::Gcopter<Eigen::VectorXd>;
+using LinearTimeCost = traj_opt_components::LinearTimeCost;
+using PolytopeSpatialMap = traj_opt_components::PolytopeSpatialMap;
 
 inline geometry_utils::Trajectory splineToSuperTrajectory(const SepticSpline &spline)
 {
@@ -42,136 +46,6 @@ inline geometry_utils::Trajectory splineToSuperTrajectory(const SepticSpline &sp
     }
     return traj;
 }
-
-struct LinearTimeCost
-{
-    double weight = 0.0;
-
-    double operator()(const std::vector<double> &Ts, Eigen::VectorXd &grad) const
-    {
-        double cost = 0.0;
-        for (int i = 0; i < static_cast<int>(Ts.size()); ++i)
-        {
-            cost += weight * Ts[i];
-            grad(i) += weight;
-        }
-        return cost;
-    }
-};
-
-struct PolytopeSpatialMap
-{
-    using VectorType = Eigen::Vector3d;
-
-    const PolyhedraV *v_polys = nullptr;
-    const Eigen::VectorXi *v_poly_idx = nullptr;
-    int num_segments = 0;
-    bool identity_mode = false;
-    PolyhedraV owned_polys;
-    Eigen::VectorXi owned_poly_idx;
-
-    void reset(const PolyhedraV *polys,
-               const Eigen::VectorXi *indices,
-               int segments,
-               bool identity = false)
-    {
-        v_polys = polys;
-        v_poly_idx = indices;
-        num_segments = segments;
-        identity_mode = identity;
-    }
-
-    void reset(const super_utils::PolyhedronV *poly,
-               int segments,
-               bool identity = false)
-    {
-        owned_polys.clear();
-        owned_polys.push_back(*poly);
-        owned_poly_idx = Eigen::VectorXi::Zero(segments);
-        reset(&owned_polys, &owned_poly_idx, segments, identity);
-    }
-
-    int getUnconstrainedDim(int index) const
-    {
-        if (identity_mode || !v_polys || !v_poly_idx || index <= 0 || index > num_segments)
-        {
-            return 3;
-        }
-        return (*v_polys)[(*v_poly_idx)(index - 1)].cols();
-    }
-
-    VectorType toPhysical(const Eigen::VectorXd &xi, int index) const
-    {
-        if (identity_mode || !v_polys || !v_poly_idx || index <= 0 || index > num_segments)
-        {
-            return xi.head<3>();
-        }
-
-        const int poly_id = (*v_poly_idx)(index - 1);
-        const auto &poly = (*v_polys)[poly_id];
-        const int k = poly.cols();
-        const double norm = xi.norm();
-        if (norm < 1e-12)
-        {
-            return poly.col(0);
-        }
-
-        const Eigen::VectorXd unit_xi = xi / norm;
-        const Eigen::VectorXd r = unit_xi.head(k - 1);
-        return poly.rightCols(k - 1) * r.cwiseProduct(r) + poly.col(0);
-    }
-
-    Eigen::VectorXd toUnconstrained(const Eigen::VectorXd &p, int index) const
-    {
-        if (identity_mode || !v_polys || !v_poly_idx || index <= 0 || index > num_segments)
-        {
-            return p;
-        }
-
-        Eigen::Matrix3Xd point(3, 1);
-        point.col(0) = p.head<3>();
-        Eigen::VectorXd xi;
-        DenseGcopter::backwardP(point, Eigen::VectorXi::Constant(1, (*v_poly_idx)(index - 1)), *v_polys, xi);
-        return xi;
-    }
-
-    Eigen::VectorXd backwardGrad(const Eigen::VectorXd &xi,
-                                 const Eigen::VectorXd &grad_p,
-                                 int index) const
-    {
-        if (identity_mode || !v_polys || !v_poly_idx || index <= 0 || index > num_segments)
-        {
-            return grad_p;
-        }
-
-        Eigen::Matrix3Xd grad_p_mat(3, 1);
-        grad_p_mat.col(0) = grad_p.head<3>();
-        Eigen::VectorXd grad_xi;
-        DenseGcopter::backwardGradP(xi,
-                                    Eigen::VectorXi::Constant(1, (*v_poly_idx)(index - 1)),
-                                    *v_polys,
-                                    grad_p_mat,
-                                    grad_xi);
-        return grad_xi;
-    }
-
-    void addNormPenalty(const Eigen::VectorXd &x,
-                        int spatial_offset,
-                        int spatial_dim,
-                        Eigen::VectorXd &grad,
-                        double &cost) const
-    {
-        if (identity_mode || !v_polys || !v_poly_idx || spatial_dim <= 0)
-        {
-            return;
-        }
-
-        const Eigen::VectorXd xi = x.segment(spatial_offset, spatial_dim);
-        Eigen::VectorXd grad_xi = grad.segment(spatial_offset, spatial_dim);
-        DenseGcopter::normRetrictionLayer(xi, *v_poly_idx, *v_polys, cost, grad_xi);
-        grad.segment(spatial_offset, spatial_dim) = grad_xi;
-    }
-};
 
 class ExpPenaltyIntegralCost
 {
@@ -268,7 +142,7 @@ public:
                 max_violation_(1) = std::max(max_violation_(1), viola_pos);
                 double pena = 0.0;
                 double pena_d = 0.0;
-                if (DenseGcopter::smoothedL1(viola_pos, smooth_eps, pena, pena_d))
+                if (traj_opt_components::smoothedL1(viola_pos, smooth_eps, pena, pena_d))
                 {
                     grad_pos += weight_pos * pena_d * outer_normal;
                     local_cost += weight_pos * pena;
@@ -292,7 +166,7 @@ public:
                 max_violation_(5) = std::max(max_violation_(5), viola_att);
                 double pena = 0.0;
                 double pena_d = 0.0;
-                if (DenseGcopter::smoothedL1(viola_att, smooth_eps, pena, pena_d))
+                if (traj_opt_components::smoothedL1(viola_att, smooth_eps, pena, pena_d))
                 {
                     grad_pos += weight_att * pena_d * 2.0 * delta;
                     local_cost += weight_att * pena;
@@ -304,7 +178,7 @@ public:
         double pena = 0.0;
         double pena_d = 0.0;
         if (weight_vel > 0.0 &&
-            DenseGcopter::smoothedL1(viola_vel, smooth_eps, pena, pena_d))
+            traj_opt_components::smoothedL1(viola_vel, smooth_eps, pena, pena_d))
         {
             grad_vel += weight_vel * pena_d * 2.0 * v;
             local_cost += weight_vel * pena;
@@ -313,7 +187,7 @@ public:
 
         const double viola_acc = a.squaredNorm() - amax_sqr;
         if (weight_acc > 0.0 &&
-            DenseGcopter::smoothedL1(viola_acc, smooth_eps, pena, pena_d))
+            traj_opt_components::smoothedL1(viola_acc, smooth_eps, pena, pena_d))
         {
             grad_acc += weight_acc * pena_d * 2.0 * a;
             local_cost += weight_acc * pena;
@@ -322,7 +196,7 @@ public:
 
         const double viola_jer = j.squaredNorm() - jmax_sqr;
         if (weight_jer > 0.0 &&
-            DenseGcopter::smoothedL1(viola_jer, smooth_eps, pena, pena_d))
+            traj_opt_components::smoothedL1(viola_jer, smooth_eps, pena, pena_d))
         {
             grad_jer += weight_jer * pena_d * 2.0 * j;
             local_cost += weight_jer * pena;
@@ -346,7 +220,7 @@ public:
 
             const double viola_omg = omg.squaredNorm() - omgmax_sqr;
             if (weight_omg > 0.0 &&
-                DenseGcopter::smoothedL1(viola_omg, smooth_eps, pena, pena_d))
+                traj_opt_components::smoothedL1(viola_omg, smooth_eps, pena, pena_d))
             {
                 grad_omg += weight_omg * pena_d * 2.0 * omg;
                 local_cost += weight_omg * pena;
@@ -355,7 +229,7 @@ public:
 
             const double viola_thrust = (thr - thrust_mean) * (thr - thrust_mean) - thrust_sqr_radi;
             if (weight_acc_thr > 0.0 &&
-                DenseGcopter::smoothedL1(viola_thrust, smooth_eps, pena, pena_d))
+                traj_opt_components::smoothedL1(viola_thrust, smooth_eps, pena, pena_d))
             {
                 grad_thr += weight_acc_thr * pena_d * 2.0 * (thr - thrust_mean);
                 local_cost += weight_acc_thr * pena;
@@ -473,7 +347,7 @@ public:
                 max_violation_(1) = std::max(max_violation_(1), viola_pos);
                 double pena = 0.0;
                 double pena_d = 0.0;
-                if (DenseGcopter::smoothedL1(viola_pos, smooth_eps, pena, pena_d))
+                if (traj_opt_components::smoothedL1(viola_pos, smooth_eps, pena, pena_d))
                 {
                     grad_pos += weight_pos * pena_d * outer_normal;
                     local_cost += weight_pos * pena;
@@ -485,7 +359,7 @@ public:
         double pena_d = 0.0;
         const double viola_vel = v.squaredNorm() - vmax_sqr;
         if (weight_vel > 0.0 &&
-            DenseGcopter::smoothedL1(viola_vel, smooth_eps, pena, pena_d))
+            traj_opt_components::smoothedL1(viola_vel, smooth_eps, pena, pena_d))
         {
             grad_vel += weight_vel * pena_d * 2.0 * v;
             local_cost += weight_vel * pena;
@@ -494,7 +368,7 @@ public:
 
         const double viola_acc = a.squaredNorm() - amax_sqr;
         if (weight_acc > 0.0 &&
-            DenseGcopter::smoothedL1(viola_acc, smooth_eps, pena, pena_d))
+            traj_opt_components::smoothedL1(viola_acc, smooth_eps, pena, pena_d))
         {
             grad_acc += weight_acc * pena_d * 2.0 * a;
             local_cost += weight_acc * pena;
@@ -503,7 +377,7 @@ public:
 
         const double viola_jer = j.squaredNorm() - jmax_sqr;
         if (weight_jer > 0.0 &&
-            DenseGcopter::smoothedL1(viola_jer, smooth_eps, pena, pena_d))
+            traj_opt_components::smoothedL1(viola_jer, smooth_eps, pena, pena_d))
         {
             grad_jer += weight_jer * pena_d * 2.0 * j;
             local_cost += weight_jer * pena;
@@ -527,7 +401,7 @@ public:
 
             const double viola_omg = omg.squaredNorm() - omgmax_sqr;
             if (weight_omg > 0.0 &&
-                DenseGcopter::smoothedL1(viola_omg, smooth_eps, pena, pena_d))
+                traj_opt_components::smoothedL1(viola_omg, smooth_eps, pena, pena_d))
             {
                 grad_omg += weight_omg * pena_d * 2.0 * omg;
                 local_cost += weight_omg * pena;
@@ -536,7 +410,7 @@ public:
 
             const double viola_thrust = (thr - thrust_mean) * (thr - thrust_mean) - thrust_sqr_radi;
             if (weight_acc_thr > 0.0 &&
-                DenseGcopter::smoothedL1(viola_thrust, smooth_eps, pena, pena_d))
+                traj_opt_components::smoothedL1(viola_thrust, smooth_eps, pena, pena_d))
             {
                 grad_thr += weight_acc_thr * pena_d * 2.0 * (thr - thrust_mean);
                 local_cost += weight_acc_thr * pena;
@@ -611,13 +485,13 @@ public:
                 total_time(0) += t;
             }
             Eigen::VectorXd tau_total;
-            DenseGcopter::backwardMapTToTau(total_time, tau_total);
+            traj_opt_components::TimeMapUtils::backwardMapTToTau(total_time, tau_total);
             z(idx++) = tau_total(0);
         }
 
         double tau_ts = 0.0;
         const double clamped_ts = std::min(std::max(initial_ts_, min_ts_), max_ts_);
-        DenseGcopter::mapIntervalToInf(min_ts_, max_ts_, clamped_ts, tau_ts);
+        traj_opt_components::TimeMapUtils::mapIntervalToInf(min_ts_, max_ts_, clamped_ts, tau_ts);
         z(idx) = tau_ts;
         return z;
     }
@@ -634,7 +508,7 @@ public:
             Eigen::VectorXd tau_total(1);
             tau_total(0) = z(idx++);
             Eigen::VectorXd total_time;
-            DenseGcopter::forwardMapTauToT(tau_total, total_time);
+            traj_opt_components::TimeMapUtils::forwardMapTauToT(tau_total, total_time);
             const double seg_time = total_time(0) / static_cast<double>(piece_num_);
             for (int i = 0; i < static_cast<int>(times.size()); ++i)
             {
@@ -671,7 +545,7 @@ public:
             Eigen::VectorXd grad_total(1);
             grad_total(0) = grad_total_time;
             Eigen::VectorXd grad_tau_total;
-            DenseGcopter::propagateGradientTToTau(tau_total, grad_total, grad_tau_total);
+            traj_opt_components::TimeMapUtils::propagateGradientTToTau(tau_total, grad_total, grad_tau_total);
             grad_z(idx++) = grad_tau_total(0);
             grads.times.setZero();
         }
@@ -691,14 +565,14 @@ public:
             grad_ts -= weight_ts_;
         }
 
-        DenseGcopter::propagateGradIntervalToInf(min_ts_, max_ts_, tau_ts, grad_ts, grad_z(idx));
+        traj_opt_components::TimeMapUtils::propagateGradIntervalToInf(min_ts_, max_ts_, tau_ts, grad_ts, grad_z(idx));
         return extra_cost;
     }
 
     double decodeStartTime(double tau_ts) const
     {
         double ts = initial_ts_;
-        DenseGcopter::mapInfToInterval(min_ts_, max_ts_, tau_ts, ts);
+        traj_opt_components::TimeMapUtils::mapInfToInterval(min_ts_, max_ts_, tau_ts, ts);
         return ts;
     }
 
