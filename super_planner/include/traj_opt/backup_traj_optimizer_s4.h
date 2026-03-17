@@ -26,7 +26,6 @@
 #include <memory>
 
 #include <traj_opt/config.hpp>
-#include <traj_opt/minco.h>
 #include <traj_opt/spline_components.hpp>
 
 #include <data_structure/base/polytope.h>

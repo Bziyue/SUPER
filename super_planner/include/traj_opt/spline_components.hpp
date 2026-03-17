@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SplineOptimizer.hpp"
+#include "traj_opt/spline/SplineOptimizer.hpp"
 
 #include <data_structure/base/trajectory.h>
 #include <utils/geometry/quadrotor_flatness.hpp>

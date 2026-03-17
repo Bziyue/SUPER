@@ -31,7 +31,7 @@ using namespace super_utils;
 bool BackupTrajOpt::processCorridor() {
     PolyhedronV curIV, curIOB; // 走廊的顶点
     if (!geometry_utils::enumerateVs(opt_vars.hPolytope, curIV)) {
-        std::cout << YELLOW << " -- [MINCO] enumerateVs failed." << RESET << std::endl;
+        std::cout << YELLOW << " -- [SUPER] enumerateVs failed." << RESET << std::endl;
         return false;
     }
     long nv = curIV.cols();
@@ -266,7 +266,7 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     } else {
         traj.clear();
         minCostFunctional = INFINITY;
-        std::cout << YELLOW << " -- [MINCO] TrajOpt failed, " << lbfgs::lbfgs_strerror(ret) << RESET << std::endl;
+        std::cout << YELLOW << " -- [SUPER] TrajOpt failed, " << lbfgs::lbfgs_strerror(ret) << RESET << std::endl;
     }
     return minCostFunctional;
 }
@@ -302,13 +302,13 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const ros_interface::R
 
 bool BackupTrajOpt::checkTrajMagnitudeBound(Trajectory &out_traj) {
     if (cfg_.penna_vel > 0 && out_traj.getMaxVelRate() > 1.2 * cfg_.max_vel) {
-        std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
+        std::cout << YELLOW << " -- [TrajOpt] Backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max vel:\t" << out_traj.getMaxVelRate() << " m/s" << RESET
                   << std::endl;
         return false;
     }
     if (cfg_.penna_acc > 0 && out_traj.getMaxAccRate() > 1.2 * cfg_.max_acc) {
-        std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
+        std::cout << YELLOW << " -- [TrajOpt] Backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max Acc:\t" << out_traj.getMaxAccRate() << " m/s" << RESET
                   << std::endl;
         return false;
@@ -355,17 +355,17 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     bool success{true};
 
     if (!setupProblemAndCheck()) {
-        std::cout << YELLOW << " -- [TrajOpt] Minco corridor preprocess error." << RESET << std::endl;
+        std::cout << YELLOW << " -- [TrajOpt] Backup corridor preprocess error." << RESET << std::endl;
         success = false;
     }
 
     if (success && std::isinf(optimize(out_traj, cfg_.opt_accuracy))) {
-        std::cout << YELLOW << " -- [SUPER] Minco backup_traj opt failed." << RESET << std::endl;
+        std::cout << YELLOW << " -- [SUPER] Backup trajectory optimization failed." << RESET << std::endl;
         success = false;
     }
 
     if (opt_vars.penalty_log(1) > cfg_.penna_pos * 0.05) {
-        std::cout << YELLOW << " -- [SUPER] Minco backup_traj out of corridor." << RESET << std::endl;
+        std::cout << YELLOW << " -- [SUPER] Backup trajectory leaves corridor." << RESET << std::endl;
         success = false;
     }
     out_ts = opt_vars.ts;
@@ -439,17 +439,17 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     bool success{true};
 
     if (!setupProblemAndCheck()) {
-        std::cout << YELLOW << " -- [TrajOpt] Minco corridor preprocess error." << RESET << std::endl;
+        std::cout << YELLOW << " -- [TrajOpt] Backup corridor preprocess error." << RESET << std::endl;
         success = false;
     }
 
     if (success && std::isinf(optimize(out_traj, cfg_.opt_accuracy))) {
-        std::cout << YELLOW << " -- [SUPER] Minco backup_traj opt failed." << RESET << std::endl;
+        std::cout << YELLOW << " -- [SUPER] Backup trajectory optimization failed." << RESET << std::endl;
         success = false;
     }
 
     if (opt_vars.penalty_log(1) > cfg_.penna_pos * 0.05) {
-        std::cout << YELLOW << " -- [SUPER] Minco backup_traj out of corridor." << RESET << std::endl;
+        std::cout << YELLOW << " -- [SUPER] Backup trajectory leaves corridor." << RESET << std::endl;
         success = false;
     }
     out_ts = opt_vars.ts;

@@ -189,6 +189,8 @@ template<typename EIGENVEC>
 void Gcopter<EIGENVEC>::backwardP(const Eigen::Matrix3Xd &points, const PolyhedronV &vPoly, EIGENVEC &xi) {
     // 所有需要优化的点大小
     const long sizeP = points.cols();
+    const long xi_dim = sizeP * vPoly.cols();
+    xi.resize(xi_dim);
     // 最小的平方距离
     double minSqrD;
     lbfgs::lbfgs_parameter_t tiny_nls_params;
@@ -284,6 +286,11 @@ void Gcopter<EIGENVEC>::backwardP(const Eigen::Matrix3Xd &P,
                                   const PolyhedraV &vPolys,
                                   EIGENVEC &xi) {
     const long sizeP = P.cols();
+    long xi_dim = 0;
+    for (long i = 0; i < sizeP; ++i) {
+        xi_dim += vPolys[vIdx(i)].cols();
+    }
+    xi.resize(xi_dim);
 
     double minSqrD;
     lbfgs::lbfgs_parameter_t tiny_nls_params;

@@ -26,16 +26,18 @@
 #include <iostream>
 #include <vector>
 
+#include <data_structure/base/trajectory.h>
 #include "utils/geometry/geometry_utils.h"
 #include "traj_opt/config.hpp"
-#include <utils/optimization/minco.h>
 
 #include <utils/header/type_utils.hpp>
 #include <super_utils/scope_timer.hpp>
 
 namespace traj_opt {
     using namespace geometry_utils;
-    using namespace optimization_utils;
+    using geometry_utils::Trajectory;
+    using super_utils::VecDf;
+    using super_utils::Vec4f;
     using std::cout;
     using std::endl;
     using std::string;

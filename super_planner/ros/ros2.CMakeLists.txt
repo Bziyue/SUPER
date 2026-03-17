@@ -29,7 +29,6 @@ set(CMAKE_PREFIX_PATH ../../../install)
 include_directories(
         SYSTEM
         include
-        ../../SplineTrajectory/include
         ../../../devel/include
         ${catkin_INCLUDE_DIRS}
         ${Eigen3_INCLUDE_DIRS}

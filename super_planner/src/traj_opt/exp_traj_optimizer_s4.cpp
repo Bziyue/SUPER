@@ -482,7 +482,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     } else {
         traj.clear();
         minCostFunctional = INFINITY;
-        cout << YELLOW << " -- [MINCO] TrajOpt failed, " << lbfgs::lbfgs_strerror(ret) << RESET << endl;
+        cout << YELLOW << " -- [SUPER] TrajOpt failed, " << lbfgs::lbfgs_strerror(ret) << RESET << endl;
     }
     return minCostFunctional + ret;
 }
@@ -645,7 +645,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     }
 
     if (!setupProblemAndCheck()) {
-        cout << YELLOW << " -- [SUPER] Minco corridor preprocess error." << RESET << endl;
+        cout << YELLOW << " -- [SUPER] Exp trajectory corridor preprocess error." << RESET << endl;
         success = false;
     }
 
@@ -653,7 +653,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
 
 
     if (success && std::isinf(optimize(out_traj, cfg_.opt_accuracy))) {
-        cout << YELLOW << " -- [SUPER] Minco exp_traj opt failed." << RESET << endl;
+        cout << YELLOW << " -- [SUPER] Exp trajectory optimization failed." << RESET << endl;
         success = false;
     }
 
@@ -738,14 +738,14 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     }
 
     if (!setupProblemAndCheck()) {
-        cout << YELLOW << " -- [SUPER] Minco corridor preprocess error." << RESET << endl;
+        cout << YELLOW << " -- [SUPER] Exp trajectory corridor preprocess error." << RESET << endl;
         success = false;
     }
 
     out_traj.clear();
 
     if (success && std::isinf(optimize(out_traj, cfg_.opt_accuracy))) {
-        cout << YELLOW << " -- [SUPER] Minco exp_traj opt failed." << RESET << endl;
+        cout << YELLOW << " -- [SUPER] Exp trajectory optimization failed." << RESET << endl;
         success = false;
     }
     penalty_log << opt_vars.penalty_log.transpose() << endl;

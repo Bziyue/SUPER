@@ -28,7 +28,6 @@
 #include <vector>
 
 #include <traj_opt/config.hpp>
-#include <traj_opt/minco.h>
 #include <traj_opt/spline_components.hpp>
 
 
@@ -44,12 +43,18 @@
 
 namespace traj_opt {
 
+    using geometry_utils::PolytopeVec;
+    using geometry_utils::Trajectory;
     using super_utils::MatD3f;
     using super_utils::Mat3Df;
+    using super_utils::StatePVAJ;
     using super_utils::VecDi;
+    using super_utils::Vec3f;
     using super_utils::VecDf;
     using super_utils::PolyhedraH;
     using super_utils::PolyhedraV;
+    using super_utils::vec_E;
+    using super_utils::vec_Vec3f;
 
 
     class ExpTrajOpt {
