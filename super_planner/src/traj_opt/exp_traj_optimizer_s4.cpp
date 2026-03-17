@@ -25,324 +25,11 @@
 #include <utils/optimization/lbfgs.h>
 #include <ros_interface/ros_interface.hpp>
 
-#define POS_IDX 1
-#define VEL_IDX 2
-#define ACC_IDX 3
-#define JER_IDX 4
-#define ATT_IDX 5
-#define OMG_IDX 6
-#define THR_IDX 7
-
 using namespace traj_opt;
 using namespace color_text;
 using namespace super_utils;
 using namespace math_utils;
 using namespace optimization_utils;
-
-using Vec8f = Eigen::Matrix<double, 8, 1>;
-using Mat83f = Eigen::Matrix<double, 8, 3>;
-
-void ExpTrajOpt::constraintsFunctional(const VecDf &T,
-                                       const MatD3f &coeffs,
-                                       const VecDi &hIdx,
-                                       const PolyhedraH &hPolys,
-                                       const Mat3Df &waypoint_attractor,
-                                       const VecDf &waypoint_attractor_dead_d,
-                                       const double &smoothFactor,
-                                       const int &integralResolution,
-                                       const VecDf &magnitudeBounds,
-                                       const VecDf &penaltyWeights,
-                                       flatness::FlatnessMap &flatMap,
-        // outputs
-                                       double &cost,
-                                       VecDf &gradT,
-                                       MatD3f &gradC,
-                                       VecDf &pena_log) {
-    /* 1) define some varible alias*/
-    const auto &vmax = magnitudeBounds[0];
-    const auto &amax = magnitudeBounds[1];
-    const auto &jmax = magnitudeBounds[2];
-    const auto &omgmax = magnitudeBounds[3];
-    const auto &accthrmin = magnitudeBounds[4];
-    const auto &accthrmax = magnitudeBounds[5];
-
-    const auto &vmaxSqr = vmax * vmax;
-    const auto &amaxSqr = amax * amax;
-    const auto &jmaxSqr = jmax * jmax;
-    const auto &omgmaxSqr = omgmax * omgmax;
-
-    const auto &thrustMean = 0.5 * (accthrmax + accthrmin);
-    const auto &thrustRadi = 0.5 * std::abs(accthrmax - accthrmin);
-    const auto &thrustSqrRadi = thrustRadi * thrustRadi;
-
-    const auto &weightPos = penaltyWeights[0];
-    const auto &weightVel = penaltyWeights[1];
-    const auto &weightAcc = penaltyWeights[2];
-    const auto &weightJer = penaltyWeights[3];
-    const auto &weightAtt = penaltyWeights[4];
-    const auto &weightOmg = penaltyWeights[5];
-    const auto &weightAccThr = penaltyWeights[6];
-
-    const auto &piece_num = T.size();
-
-    const double integralFrac = 1.0 / integralResolution;
-    VecDf max_pena(8);
-    max_pena.setZero();
-
-    /* 2) add integral cost */
-
-    for (int i = 0; i < piece_num; i++) {
-        const Mat83f &c = coeffs.block<8, 3>(i * 8, 0);
-        const auto &step = T(i) * integralFrac;
-        for (int j = 0; j <= integralResolution; j++) {
-            double s1 = j * step;
-            double s2 = s1 * s1;
-            double s3 = s2 * s1;
-            double s4 = s2 * s2;
-            double s5 = s4 * s1;
-            double s6 = s4 * s2;
-            double s7 = s4 * s3;
-            Vec8f beta0, beta1, beta2, beta3, beta4;
-            beta0 << 1.0, s1, s2, s3, s4, s5, s6, s7;
-            beta1 << 0.0, 1.0, 2.0 * s1, 3.0 * s2, 4.0 * s3, 5.0 * s4, 6.0 * s5, 7.0 * s6;
-            beta2 << 0.0, 0.0, 2.0, 6.0 * s1, 12.0 * s2, 20.0 * s3, 30.0 * s4, 42.0 * s5;
-            beta3 << 0.0, 0.0, 0.0, 6.0, 24.0 * s1, 60.0 * s2, 120.0 * s3, 210.0 * s4;
-            beta4 << 0.0, 0.0, 0.0, 0.0, 24.0, 120.0 * s1, 360.0 * s2, 840.0 * s3;
-            //beta5 << 0.0, 0.0, 0.0, 0., 0.0, 120.0, 720.0 * s1, 2520.0 * s2;
-
-            const Vec3f pos = c.transpose() * beta0;
-            const Vec3f vel = c.transpose() * beta1;
-            const Vec3f acc = c.transpose() * beta2;
-            const Vec3f jer = c.transpose() * beta3;
-            const Vec3f sna = c.transpose() * beta4;
-
-            double tmp_cost{0.0};
-            Vec3f gradPos{0, 0, 0}, gradVel{0, 0, 0}, gradAcc{0, 0, 0}, gradJer{0, 0, 0};
-
-            /* 2.1  For position cost */
-            const auto &L = hIdx(i);
-            const auto &K = hPolys[L].rows();
-            if (weightPos > 0) {
-                for (int k = 0; k < K; k++) {
-                    const Vec3f outerNormal = hPolys[L].block<1, 3>(k, 0);
-                    const double violaPos = outerNormal.dot(pos) + hPolys[L](k, 3);
-                    if (violaPos > max_pena(POS_IDX)) max_pena(POS_IDX) = violaPos;
-                    double violaPosPena, violaPosPenaD;
-                    if (gcopter::smoothedL1(violaPos, smoothFactor, violaPosPena, violaPosPenaD)) {
-                        gradPos += weightPos * violaPosPenaD * outerNormal;
-                        tmp_cost += weightPos * violaPosPena;
-                    }
-                }
-            }
-
-            /* 2.2  For attract point cost  */
-            if (weightAtt > 0.0) {
-                const auto is_waypoint = (j == 0) && (i != 0);
-                const auto is_end = ((j == integralResolution) && (i != piece_num - 1));
-                const auto idx = is_end ? i : i - 1;
-
-                if (is_waypoint || is_end) {
-                    Vec3f p_a = pos - waypoint_attractor.col(idx);
-                    const auto &violaAtt =
-                            p_a.squaredNorm() - waypoint_attractor_dead_d(idx) * waypoint_attractor_dead_d(idx);
-                    double violaAttPena, violaAttPenaD;
-                    if (violaAtt > max_pena(ATT_IDX)) max_pena(ATT_IDX) = violaAtt;
-                    if (gcopter::smoothedL1(violaAtt, smoothFactor, violaAttPena, violaAttPenaD)) {
-                        gradPos += weightAtt * violaAttPenaD * 2.0 * p_a;
-                        tmp_cost += weightAtt * violaAttPena;
-                    }
-                }
-            }
-
-            /* 2.3 For vel cost  */
-            const auto &violaVel = vel.squaredNorm() - vmaxSqr;
-            double violaVelPena, violaVelPenaD;
-            if (weightVel > 0 && gcopter::smoothedL1(violaVel, smoothFactor, violaVelPena, violaVelPenaD)) {
-                gradVel += weightVel * violaVelPenaD * 2.0 * vel;
-                tmp_cost += weightVel * violaVelPena;
-                if (violaVel > max_pena(VEL_IDX)) max_pena(VEL_IDX) = violaVel;
-            }
-
-            /* 2.4 For acc cost  */
-            const auto &violaAcc = acc.squaredNorm() - amaxSqr;
-            double violaAccPena, violaAccPenaD;
-            if (weightAcc > 0 && gcopter::smoothedL1(violaAcc, smoothFactor, violaAccPena, violaAccPenaD)) {
-                gradAcc += weightAcc * violaAccPenaD * 2.0 * acc;
-                tmp_cost += weightAcc * violaAccPena;
-                if (violaAcc > max_pena(ACC_IDX)) max_pena(ACC_IDX) = violaAcc;
-            }
-
-            /* 2.5 For acc cost  */
-            const auto &violaJer = jer.squaredNorm() - jmaxSqr;
-            double violaJerPena, violaJerPenaD;
-            if (weightJer > 0 && gcopter::smoothedL1(violaJer, smoothFactor, violaJerPena, violaJerPenaD)) {
-                gradJer += weightJer * violaJerPenaD * 2.0 * jer;
-                tmp_cost += weightJer * violaJerPena;
-                if (violaJer > max_pena(JER_IDX)) max_pena(JER_IDX) = violaJer;
-            }
-
-            Vec3f totalGradPos{0.0, 0.0, 0.0}, totalGradVel{0.0, 0.0, 0.0},
-                    totalGradAcc{0.0, 0.0, 0.0}, totalGradJer{0.0, 0.0, 0.0};
-
-            /* 2.6  For omg amd thr cost  */
-            if (weightOmg > 0 && weightAccThr > 0) {
-                double thr;
-                Vec4f quat;
-                Vec3f omg;
-                flatMap.forward(vel, acc, jer, 0.0, 0.0, thr, quat, omg);
-                const auto &violaOmg = omg.squaredNorm() - omgmaxSqr;
-                const auto &violaThrust = (thr - thrustMean) * (thr - thrustMean) - thrustSqrRadi;
-
-                /* 2.6.1  For omg cost  */
-                double violaOmgPena, violaOmgPenaD;
-                Vec3f gradOmg{0, 0, 0};
-                if (weightOmg > 0 && gcopter::smoothedL1(violaOmg, smoothFactor, violaOmgPena, violaOmgPenaD)) {
-                    gradOmg += weightOmg * violaOmgPenaD * 2.0 * omg;
-                    tmp_cost += weightOmg * violaOmgPena;
-                    if (violaOmg > max_pena(OMG_IDX)) max_pena(OMG_IDX) = violaOmg;
-                }
-
-                /* 2.6.2  For thr cost  */
-                double violaThrustPena, violaThrustPenaD;
-                double gradThr{0.0};
-                if (weightAccThr > 0 &&
-                    gcopter::smoothedL1(violaThrust, smoothFactor, violaThrustPena, violaThrustPenaD)) {
-                    gradThr += weightAccThr * violaThrustPenaD * 2.0 * (thr - thrustMean);
-                    tmp_cost += weightAccThr * violaThrustPena;
-                    if (violaThrust > max_pena(THR_IDX)) max_pena(THR_IDX) = violaThrust;
-                }
-                double totalGradPsi{0.0}, totalGradPsiD{0.0};
-                flatMap.backward(gradPos, gradVel, gradAcc, gradJer, gradThr, Vec4f(0, 0, 0, 0), gradOmg,
-                                 totalGradPos, totalGradVel, totalGradAcc, totalGradJer,
-                                 totalGradPsi, totalGradPsiD);
-            } else {
-                totalGradPos = gradPos;
-                totalGradVel = gradVel;
-                totalGradAcc = gradAcc;
-                totalGradJer = gradJer;
-            }
-
-            const auto node = (j == 0 || j == integralResolution) ? 0.5 : 1.0;
-            const double alpha = j * integralFrac;
-            gradC.block<8, 3>(i * 8, 0) += (beta0 * totalGradPos.transpose() +
-                                            beta1 * totalGradVel.transpose() +
-                                            beta2 * totalGradAcc.transpose() +
-                                            beta3 * totalGradJer.transpose()) *
-                                           node * step;
-            gradT(i) += (totalGradPos.dot(vel) +
-                         totalGradVel.dot(acc) +
-                         totalGradAcc.dot(jer) +
-                         totalGradJer.dot(sna)) *
-                        alpha * node * step +
-                        node * integralFrac * tmp_cost;
-            cost += node * step * tmp_cost;
-        }
-    }
-
-    /* 3) log all violations */
-    pena_log.tail(7) = max_pena.tail(7);
-}
-
-
-/*
- * @ brief: This is the callback function of the L-BFGS solver
- *
- */
-double ExpTrajOpt::costFunctional(void *ptr,
-                                  const VecDf &x,
-                                  VecDf &g) {
-    /* 1) Decode the pointer */
-    OptimizationVariables &obj = *static_cast<OptimizationVariables *>(ptr);
-    const auto &dimTau = obj.temporalDim;
-    const auto &dimXi = obj.spatialDim;
-    const auto &weightT = obj.rho;
-    const auto &vPolyIdx = obj.vPolyIdx;
-    const auto &vPolytopes = obj.vPolytopes;
-    const auto &hPolyIdx = obj.hPolyIdx;
-    const auto &hPolytopes = obj.hPolytopes;
-    const auto &waypoint_attractor = obj.waypoint_attractor;
-    const auto &waypoint_attractor_dead_d = obj.waypoint_attractor_dead_d;
-    const auto &smooth_eps = obj.smooth_eps;
-    const auto &integral_res = obj.integral_res;
-    const auto &magnitudeBounds = obj.magnitudeBounds;
-    const auto &penaltyWeights = obj.penaltyWeights;
-    const auto &block_energy_cost = obj.block_energy_cost;
-
-    auto &quadrotor_flatness = obj.quadrotor_flatness;
-
-    obj.iter_num++;
-    const auto &pos_constraint_type = obj.pos_constraint_type;
-
-    const Eigen::Map<const VecDf> tau(x.data(), dimTau);
-    const Eigen::Map<const VecDf> xi(x.data() + dimTau, dimXi);
-    Eigen::Map<VecDf> gradTau(g.data(), dimTau);
-    Eigen::Map<VecDf> gradXi(g.data() + dimTau, dimXi);
-
-    /* 2) Reconstruct the optimization varibles */
-
-    Mat3Df points;
-    VecDf times;
-    gcopter::forwardMapTauToT(tau, times);
-    switch (pos_constraint_type) {
-        case 1: {
-            VecDf xi_e = xi;
-            points = Eigen::Map<Eigen::Matrix<double, 3, Eigen::Dynamic>>(xi_e.data(), 3, xi_e.size() / 3);
-            break;
-        }
-        default: {
-            gcopter::forwardP(xi, vPolyIdx, vPolytopes, points);
-            break;
-        }
-    }
-
-    /* 3) Compute the energy const and gradient */
-    double cost{0};
-    obj.minco.setParameters(points, times);
-    MatD3f partialGradByCoeffs(8 * times.size(), 3);
-    VecDf partialGradByTimes(times.size());
-    partialGradByCoeffs.setZero();
-    partialGradByTimes.setZero();
-    if (!block_energy_cost) {
-        obj.minco.getEnergy(cost);
-        obj.minco.getEnergyPartialGradByCoeffs(partialGradByCoeffs);
-        obj.minco.getEnergyPartialGradByTimes(partialGradByTimes);
-    }
-    obj.penalty_log(0) = cost;
-
-    /* 4) Compute the constrain cost and gradient  */
-    constraintsFunctional(times, obj.minco.getCoeffs(),
-                          hPolyIdx, hPolytopes,
-                          waypoint_attractor, waypoint_attractor_dead_d,
-                          smooth_eps, integral_res,
-                          magnitudeBounds, penaltyWeights,
-                          quadrotor_flatness,
-                          cost, partialGradByTimes, partialGradByCoeffs, obj.penalty_log);
-
-    /* 5) Propagate the gradient from CT to PT */
-    Mat3Df gradByPoints;
-    VecDf gradByTimes;
-    obj.minco.propogateGrad(partialGradByCoeffs, partialGradByTimes,
-                            gradByPoints, gradByTimes);
-    cost += weightT * times.sum();
-    gradByTimes.array() += weightT;
-
-    /* 6) Propagate the gradient from PT to optimization varibles*/
-    gcopter::propagateGradientTToTau(tau, gradByTimes, gradTau);
-    switch (pos_constraint_type) {
-        case 1: {
-            MatDf gp = gradByPoints;
-            gradXi = Eigen::Map<VecDf>(gp.data(), gp.size());
-            break;
-        }
-        default: {
-            gcopter::backwardGradP(xi, vPolyIdx, vPolytopes, gradByPoints, gradXi);
-            gcopter::normRetrictionLayer(xi, vPolyIdx, vPolytopes, cost, gradXi);
-            break;
-        }
-    }
-    return cost;
-}
-
 static void truncateToSixDecimals(double &num) {
     num = std::trunc(num * 1e6) / 1e6; // 直接截断，无四舍五入
 }
@@ -586,11 +273,6 @@ bool ExpTrajOpt::setupProblemAndCheck() {
         }
     }
 
-    opt_vars.minco.setConditions(opt_vars.headPVAJ, opt_vars.tailPVAJ, opt_vars.piece_num);
-    opt_vars.gradByPoints.resize(3, opt_vars.piece_num - 1);
-    opt_vars.gradByTimes.resize(opt_vars.piece_num);
-    opt_vars.partialGradByCoeffs.resize(8 * opt_vars.piece_num, 3);
-    opt_vars.partialGradByTimes.resize(opt_vars.piece_num);
     return true;
 }
 
@@ -611,17 +293,74 @@ bool ExpTrajOpt::setInitPsAndTs(const vec_Vec3f &init_ps, const vector<double> &
     return true;
 }
 
-double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
-    /* 1) allocate vector for optimization varibles */
-    VecDf x(opt_vars.temporalDim + opt_vars.spatialDim);
-    /*    creat map for the opt_var vector */
-    Eigen::Map<VecDf> tau(x.data(), opt_vars.temporalDim);
-    Eigen::Map<VecDf> xi(x.data() + opt_vars.temporalDim, opt_vars.spatialDim);
+bool ExpTrajOpt::configureSplineProblem() {
+    time_cost_.weight = opt_vars.rho;
+    spatial_map_.reset(&opt_vars.vPolytopes,
+                       &opt_vars.vPolyIdx,
+                       opt_vars.piece_num,
+                       opt_vars.pos_constraint_type == 1);
+    integral_cost_.reset(&opt_vars.hPolytopes,
+                         &opt_vars.hPolyIdx,
+                         &opt_vars.waypoint_attractor,
+                         &opt_vars.waypoint_attractor_dead_d,
+                         opt_vars.smooth_eps,
+                         opt_vars.magnitudeBounds,
+                         opt_vars.penaltyWeights,
+                         &opt_vars.quadrotor_flatness);
 
+    optimizer_.setSpatialMap(&spatial_map_);
+    optimizer_.setAuxiliaryStateMap(nullptr);
+    optimizer_.setEnergyWeights(opt_vars.block_energy_cost ? 0.0 : 1.0);
+    optimizer_.setIntegralNumSteps(opt_vars.integral_res);
+
+    SplineTrajectory::OptimizationFlags flags;
+    flags.start_p = false;
+    flags.end_p = false;
+    flags.start_v = false;
+    flags.end_v = false;
+    flags.start_a = false;
+    flags.end_a = false;
+    flags.start_j = false;
+    flags.end_j = false;
+    optimizer_.setOptimizationFlags(flags);
+
+    spline_opt::WaypointsType waypoints(opt_vars.piece_num + 1, 3);
+    waypoints.row(0) = opt_vars.headPVAJ.col(0).transpose();
+    for (int i = 0; i < opt_vars.piece_num - 1; ++i) {
+        waypoints.row(i + 1) = opt_vars.points.col(i).transpose();
+    }
+    waypoints.row(opt_vars.piece_num) = opt_vars.tailPVAJ.col(0).transpose();
+
+    SplineTrajectory::BoundaryConditions<3> bc;
+    bc.start_velocity = opt_vars.headPVAJ.col(1);
+    bc.start_acceleration = opt_vars.headPVAJ.col(2);
+    bc.start_jerk = opt_vars.headPVAJ.col(3);
+    bc.end_velocity = opt_vars.tailPVAJ.col(1);
+    bc.end_acceleration = opt_vars.tailPVAJ.col(2);
+    bc.end_jerk = opt_vars.tailPVAJ.col(3);
+
+    std::vector<double> time_segments(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
+    return optimizer_.setInitState(time_segments, waypoints, 0.0, bc);
+}
+
+double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
+    ++opt_vars.iter_num;
+    std::vector<double> eval_times(opt_vars.temporalDim);
+    SplineTrajectory::QuadInvTimeMap time_map;
+    for (int i = 0; i < opt_vars.temporalDim; ++i) {
+        eval_times[i] = time_map.toTime(vars(i));
+    }
+    integral_cost_.beginEvaluation(&eval_times);
+    double cost = optimizer_.evaluate(vars, grad, time_cost_, integral_cost_);
+    spatial_map_.addNormPenalty(vars, opt_vars.temporalDim, opt_vars.spatialDim, grad, cost);
+    opt_vars.penalty_log = integral_cost_.getPenaltyLog();
+    return cost;
+}
+
+double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     opt_vars.penalty_log.resize(8);
     opt_vars.penalty_log.setZero();
 
-    /* 2) check the initial value of the optimization varibles */
     if (opt_vars.times.minCoeff() < 1e-3) {
         cout << YELLOW << " -- [TrajOpt] Error, the init times have zero, force return." << RESET << endl;
         cout << " -- Head PVAJ: " << endl;
@@ -640,21 +379,18 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         }
     }
 
-    /* 3)  construct the initial guess of the optimization varibles*/
-    gcopter::backwardMapTToTau(opt_vars.times, tau);
-    switch (opt_vars.pos_constraint_type) {
-        case 1: {
-            MatDf p_e = opt_vars.points;
-            xi = Eigen::Map<const VecDf>(p_e.data(), p_e.size());
-            break;
-        }
-        default: {
-            gcopter::backwardP(opt_vars.points, opt_vars.vPolyIdx, opt_vars.vPolytopes, xi);
-            break;
-        }
+    if (!configureSplineProblem()) {
+        return INFINITY;
     }
 
-    /* 4) setup the optimizer's parameters*/
+    VecDf x = optimizer_.generateInitialGuess();
+
+    opt_vars.init_ts = opt_vars.times;
+    opt_vars.init_ps.clear();
+    for (int col = 0; col < opt_vars.points.cols(); col++) {
+        opt_vars.init_ps.emplace_back(opt_vars.points.col(col));
+    }
+
     opt_vars.iter_num = 0;
     double minCostFunctional{0};
     lbfgs::lbfgs_parameter_t lbfgs_params;
@@ -663,15 +399,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     lbfgs_params.min_step = 1.0e-32;
     lbfgs_params.g_epsilon = 0.0;
     lbfgs_params.delta = relCostTol;
-    VecDf times_init = opt_vars.times;
 
-    opt_vars.init_ts = opt_vars.times;
-    opt_vars.init_ps.clear();
-    for (int col = 0; col < opt_vars.points.cols(); col++) {
-        opt_vars.init_ps.emplace_back(opt_vars.points.col(col));
-    }
-
-    // keep fixed accuracy for
     for (int i = 0; i < opt_vars.waypoint_attractor_dead_d.size(); i++) {
         truncateToSixDecimals(opt_vars.waypoint_attractor_dead_d(i));
         truncateToSixDecimals(opt_vars.waypoint_attractor(0, i));
@@ -680,25 +408,32 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
 
     cout << std::fixed << std::setprecision(15);
-    auto x0 = x;
-    // only for debug
-//    cout << " -- [ExpOpt] Start optimization." << x.transpose() << endl;
-//    cout << " -- [ExpOpt] minCostFunctional: " << minCostFunctional << endl;
-//    cout << " -- [ExpOpt] relCostTol: " << relCostTol << endl;
-//    cout << " -- [ExpOpt] weightAtt: " << opt_vars.penaltyWeights(4) << endl;
-//    cout << " -- [ExpOpt] waypoint_attractor: " << opt_vars.waypoint_attractor << endl;
-//    cout << " -- [ExpOpt] waypoint_attractor_dead_d: " << opt_vars.waypoint_attractor_dead_d.transpose() << endl;
-    // TimeConsuming ttt(" -- [ExpTrajOpt]", false);
     opt_vars.iter_num = 0;
+    const auto evaluator = [](void *ptr, const VecDf &vars, VecDf &grad) -> double {
+        return static_cast<ExpTrajOpt *>(ptr)->evaluateCurrentSplineCost(vars, grad);
+    };
+
     int ret = lbfgs::lbfgs_optimize(x,
                                     minCostFunctional,
-                                    &ExpTrajOpt::costFunctional,
+                                    evaluator,
                                     nullptr,
                                     nullptr,
-                                    &this->opt_vars,
+                                    this,
                                     lbfgs_params);
-    // double dt = ttt.stop();
-    gcopter::forwardMapTauToT(tau, opt_vars.times);
+
+    const int optimizer_iters = opt_vars.iter_num;
+    VecDf grad(x.size());
+    minCostFunctional = evaluateCurrentSplineCost(x, grad);
+    opt_vars.iter_num = optimizer_iters;
+    const SplineType *optimal_spline = optimizer_.getOptimalSpline();
+    if (optimal_spline != nullptr) {
+        opt_vars.times.resize(optimal_spline->getTrajectory().getNumSegments());
+        for (int i = 0; i < opt_vars.times.size(); ++i) {
+            opt_vars.times(i) = optimal_spline->getTrajectory()[i].duration();
+        }
+    }
+    opt_vars.penalty_log(0) = (!opt_vars.block_energy_cost && optimal_spline != nullptr) ? optimal_spline->getEnergy() : 0.0;
+
     if (cfg_.print_optimizer_log) {
         cout << " -- [ExpOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
         cout << "\tEnergy: " << opt_vars.penalty_log(0) << endl;
@@ -734,27 +469,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
 
     if (ret >= 0) {
-        gcopter::forwardMapTauToT(tau, opt_vars.times);
-        switch (opt_vars.pos_constraint_type) {
-            case 1: {
-                VecDf xi_e = xi;
-                opt_vars.points = Eigen::Map<Eigen::Matrix<double, 3, Eigen::Dynamic>>(xi_e.data(), 3, xi_e.size() / 3);
-                break;
+        if (optimal_spline != nullptr) {
+            traj = spline_opt::splineToSuperTrajectory(*optimal_spline);
+            opt_vars.points.resize(3, std::max(0, opt_vars.piece_num - 1));
+            for (int i = 0; i < opt_vars.points.cols(); ++i) {
+                opt_vars.points.col(i) = traj.getJuncPos(i + 1);
             }
-            default: {
-                gcopter::forwardP(xi, opt_vars.vPolyIdx,
-                                  opt_vars.vPolytopes, opt_vars.points);
-                break;
-            }
+        } else {
+            traj.clear();
+            minCostFunctional = INFINITY;
         }
-//        opt_vars.minco.setConditions(opt_vars.headPVAJ, opt_vars.tailPVAJ, opt_vars.temporalDim);
-        opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
-        opt_vars.minco.getTrajectory(traj);
     } else {
         traj.clear();
         minCostFunctional = INFINITY;
         cout << YELLOW << " -- [MINCO] TrajOpt failed, " << lbfgs::lbfgs_strerror(ret) << RESET << endl;
-//        cout << "Init times: " << times_init.transpose() << endl;
     }
     return minCostFunctional + ret;
 }
@@ -794,6 +522,19 @@ ExpTrajOpt::ExpTrajOpt(const traj_opt::Config &cfg, const ros_interface::RosInte
 ExpTrajOpt::~ExpTrajOpt() {
     failed_traj_log.close();
     penalty_log.close();
+}
+
+bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
+                          PolytopeVec &sfcs,
+                          Trajectory &out_traj) {
+    vec_E<Vec3f> guide_path;
+    guide_path.emplace_back(headPVAJ.col(0));
+    guide_path.emplace_back(tailPVAJ.col(0));
+
+    const double nominal_speed = std::max(cfg_.max_vel, 0.1);
+    const double nominal_time = std::max(0.01, (tailPVAJ.col(0) - headPVAJ.col(0)).norm() / nominal_speed);
+    vector<double> guide_t{0.0, nominal_time};
+    return optimize(headPVAJ, tailPVAJ, guide_path, guide_t, sfcs, out_traj);
 }
 
 

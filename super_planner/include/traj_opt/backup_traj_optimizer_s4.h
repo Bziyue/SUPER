@@ -27,6 +27,7 @@
 
 #include <traj_opt/config.hpp>
 #include <traj_opt/minco.h>
+#include <traj_opt/spline_components.hpp>
 
 #include <data_structure/base/polytope.h>
 #include <data_structure/base/trajectory.h>
@@ -49,16 +50,29 @@ namespace traj_opt {
     using namespace optimization_utils;
 
     class BackupTrajOpt {
+        using SplineType = spline_opt::SepticSpline;
+        using SpatialMap = spline_opt::PolytopeSpatialMap;
+        using AuxiliaryStateMap = spline_opt::BackupAuxiliaryStateMap;
+        using Optimizer = SplineTrajectory::SplineOptimizer<3,
+                                                            SplineType,
+                                                            SplineTrajectory::QuadInvTimeMap,
+                                                            SpatialMap,
+                                                            AuxiliaryStateMap>;
+
     private:
         traj_opt::Config cfg_;
         ros_interface::RosInterface::Ptr ros_ptr_;
+        Optimizer optimizer_;
+        SpatialMap spatial_map_;
+        AuxiliaryStateMap auxiliary_state_map_;
+        spline_opt::LinearTimeCost time_cost_;
+        spline_opt::BackupPenaltyIntegralCost integral_cost_;
 
         std::ofstream failed_traj_log;
         std::ofstream penalty_log;
 
         struct OptimizationVariables {
             bool uniform_time_en{false};
-            VecDf gradByTotalT, total_time;
 
             double rho;
             int iter_num{0};
@@ -68,10 +82,6 @@ namespace traj_opt {
             int integral_res;
             flatness::FlatnessMap quadrotor_flatness;
 
-            Eigen::Matrix3Xd gradByPoints;
-            Eigen::VectorXd gradByTimes;
-            Eigen::MatrixX3d partialGradByCoeffs;
-            Eigen::VectorXd partialGradByTimes;
             bool default_init{true};
             bool given_init_ts_and_ps{false};
             int piece_num;
@@ -86,8 +96,6 @@ namespace traj_opt {
             PolyhedronH hPolytope;
             PolyhedronV vPolytope;
 
-            MINCO_S4NU minco;
-
             StatePVAJ headPVAJ;
             StatePVAJ tailPVAJ;
             vec_E<Vec3f> guide_path;
@@ -99,7 +107,6 @@ namespace traj_opt {
 
             bool debug_en;
             double ts;
-            double gradTs;
 
             Trajectory exp_traj;
             double min_ts, max_ts;
@@ -118,25 +125,11 @@ namespace traj_opt {
         } opt_vars{};
 
     private:
-        /// Optimization functions
-        static double costFunctional(void *ptr,
-                                     const Eigen::VectorXd &x,
-                                     Eigen::VectorXd &g);
-
-        static void constraintsFunctional(const Eigen::VectorXd &T,
-                                          const Eigen::MatrixX3d &coeffs,
-                                          const PolyhedronH &hPoly,
-                                          const double &smoothFactor,
-                                          const int &integralResolution,
-                                          const Eigen::VectorXd &magnitudeBounds,
-                                          const Eigen::VectorXd &penaltyWeights,
-                                          flatness::FlatnessMap &flatMap,
-                                          double &cost,
-                                          Eigen::VectorXd &gradT,
-                                          Eigen::MatrixX3d &gradC,
-                                          VecDf &pena_log);
-
         bool processCorridor();
+
+        bool configureSplineProblem();
+
+        double evaluateCurrentSplineCost(const Eigen::VectorXd &vars, Eigen::VectorXd &grad);
 
         static int
         visualizeProgress(void *instance, const Eigen::VectorXd &x, const Eigen::VectorXd &g, const double fx,

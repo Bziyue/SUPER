@@ -29,6 +29,7 @@
 
 #include <traj_opt/config.hpp>
 #include <traj_opt/minco.h>
+#include <traj_opt/spline_components.hpp>
 
 
 #include <data_structure/base/polytope.h>
@@ -52,10 +53,21 @@ namespace traj_opt {
 
 
     class ExpTrajOpt {
+        using SplineType = spline_opt::SepticSpline;
+        using SpatialMap = spline_opt::PolytopeSpatialMap;
+        using Optimizer = SplineTrajectory::SplineOptimizer<3,
+                                                            SplineType,
+                                                            SplineTrajectory::QuadInvTimeMap,
+                                                            SpatialMap>;
+
         traj_opt::Config cfg_;
         std::ofstream failed_traj_log;
         std::ofstream penalty_log;
         ros_interface::RosInterface::Ptr ros_ptr_;
+        Optimizer optimizer_;
+        SpatialMap spatial_map_;
+        spline_opt::LinearTimeCost time_cost_;
+        spline_opt::ExpPenaltyIntegralCost integral_cost_;
 
         struct OptimizationVariables {
             double rho;
@@ -66,10 +78,6 @@ namespace traj_opt {
             int integral_res;
             flatness::FlatnessMap quadrotor_flatness;
 
-            Mat3Df gradByPoints;
-            VecDf gradByTimes;
-            MatD3f partialGradByCoeffs;
-            VecDf partialGradByTimes;
             bool default_init{true};
             bool given_init_ts_and_ps{false};
             int piece_num;
@@ -90,8 +98,6 @@ namespace traj_opt {
             VecDi vPolyIdx;
             VecDi hPolyIdx;
 
-            MINCO_S4NU minco;
-
             StatePVAJ headPVAJ;
             StatePVAJ tailPVAJ;
             vec_E<Vec3f> guide_path;
@@ -102,29 +108,13 @@ namespace traj_opt {
             VecDf penalty_log;
         } opt_vars;
 
-        static double costFunctional(void *ptr,
-                                     const VecDf &x,
-                                     VecDf &g);
-
-        static void constraintsFunctional(const VecDf &T,
-                                          const MatD3f &coeffs,
-                                          const VecDi &hIdx,
-                                          const PolyhedraH &hPolys,
-                                          const Mat3Df &waypoint_attractor,
-                                          const VecDf &waypoint_attractor_dead_d,
-                                          const double &smoothFactor,
-                                          const int &integralResolution,
-                                          const VecDf &magnitudeBounds,
-                                          const VecDf &penaltyWeights,
-                                          flatness::FlatnessMap &flatMap,
-                                          double &cost,
-                                          VecDf &gradT,
-                                          MatD3f &gradC,
-                                          VecDf &penalty_log);
-
         bool processCorridor();
 
         bool processCorridorWithGuideTraj();
+
+        bool configureSplineProblem();
+
+        double evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad);
 
         void defaultInitialization();
 
@@ -308,11 +298,6 @@ namespace traj_opt {
                 }
             }
 
-            opt_vars.minco.setConditions(opt_vars.headPVAJ, opt_vars.tailPVAJ, opt_vars.piece_num);
-            opt_vars.gradByPoints.resize(3, opt_vars.piece_num - 1);
-            opt_vars.gradByTimes.resize(opt_vars.piece_num);
-            opt_vars.partialGradByCoeffs.resize(8 * opt_vars.piece_num, 3);
-            opt_vars.partialGradByTimes.resize(opt_vars.piece_num);
             return true;
         }
 
