@@ -22,6 +22,7 @@
 */
 
 #include <data_structure/base/polytope.h>
+#include <cmath>
 #include <random>
 
 using namespace geometry_utils;
@@ -119,7 +120,7 @@ bool Polytope::PointIsInside(const Vec3f &pt, const double & margin) const {
     if (undefined) {
         return false;
     }
-    if (planes.rows() == 0 || isnan(planes.sum())) {
+    if (planes.rows() == 0 || std::isnan(planes.sum())) {
         std::cout << YELLOW << "ill polytope, force return." << RESET << std::endl;
     }
     Eigen::Vector4d pt_e;

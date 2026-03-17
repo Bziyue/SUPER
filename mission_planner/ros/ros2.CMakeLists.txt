@@ -17,6 +17,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g -fPIC")
 add_compile_options(-DQT_NO_VERSION_TAGGING)
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 add_definitions(-DUSE_ROS2)
+add_definitions(-DBACKWARD_HAS_DW=0 -DBACKWARD_HAS_BFD=0 -DBACKWARD_HAS_DWARF=0 -DBACKWARD_HAS_BACKTRACE_SYMBOL=1)
 
 
 # for CLION to search the package
@@ -48,7 +49,6 @@ set(THIRD_PARTY
         ${PCL_LIBRARIES}
         ${OpenCV_LIBRARIES}
         yaml-cpp
-        -ldw
         )
 
 set(dependencies

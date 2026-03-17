@@ -29,7 +29,9 @@
  * Test code:
  *      roslaunch simulator test_env.launch
  * */
+#ifndef BACKWARD_HAS_DW
 #define BACKWARD_HAS_DW 1
+#endif
 
 #include "utils/header/backward.hpp"
 

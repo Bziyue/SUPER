@@ -2,7 +2,9 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "waypoint_mission/ros2_waypoint_planner.hpp"
 
+#ifndef BACKWARD_HAS_DW
 #define BACKWARD_HAS_DW 1
+#endif
 #include "utils/backward.hpp"
 namespace backward{
     backward::SignalHandling sh;

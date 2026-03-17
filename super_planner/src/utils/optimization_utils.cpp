@@ -340,4 +340,7 @@ Gcopter<EIGENVEC>::normRetrictionLayer(const Eigen::VectorXd &xi, const Eigen::V
 }
 
 template
+class optimization_utils::Gcopter<Eigen::VectorXd>;
+
+template
 class optimization_utils::Gcopter<Eigen::Map<Eigen::VectorXd>>;

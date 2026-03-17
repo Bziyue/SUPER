@@ -8,7 +8,9 @@
  * Test code:
  *      roslaunch simulator test_env.launch
  * */
+#ifndef BACKWARD_HAS_DW
 #define BACKWARD_HAS_DW 1
+#endif
 #include "utils/backward.hpp"
 namespace backward{
     backward::SignalHandling sh;
@@ -29,4 +31,3 @@ int main(int argc, char **argv) {
     ros::waitForShutdown();
     return 0;
 }
-
