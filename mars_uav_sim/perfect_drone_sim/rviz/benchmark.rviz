@@ -508,7 +508,7 @@ Visualization Manager:
     - Class: rviz/Interact
       Hide Inactive Objects: true
     - Class: rviz/SetGoal
-      Topic: goal
+      Topic: /goal
   Value: true
   Views:
     Current:

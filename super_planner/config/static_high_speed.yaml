@@ -1,6 +1,6 @@
 fsm:
   click_goal_en: true
-  click_goal_topic: "/planning/click_goal"
+  click_goal_topic: "/goal"
   click_height: 1.5
   click_yaw_en: true
   replan_rate: 15.0
@@ -185,4 +185,3 @@ rog_map:
     #             the cell will be considered as unknown.
     # in all, 1.0 is more aggressive while 0.0 is more conservative.
     unk_thresh: 1.0
-
