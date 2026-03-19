@@ -99,9 +99,7 @@ SUPER serves as the flight platform and navigation system in the video demonstra
 
 This `ros2` branch is fixed to **ROS2 Humble** and is intended to be built directly with `colcon build`.
 
-Do not use `scripts/select_ros_version.sh` on this branch. Use the dedicated ROS2 workspace instead:
-
-* Workspace path: `/home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros2`
+Do not use `scripts/select_ros_version.sh` on this branch.
 
 ## 2.2 Installation
 
@@ -122,7 +120,7 @@ Tested environment:
 
 ```bash
 source /opt/ros/humble/setup.bash
-cd /home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros2
+cd ${PATH-TO-WS}
 colcon build
 source install/local_setup.bash
 ```
@@ -131,7 +129,7 @@ If you want verbose console output while debugging:
 
 ```bash
 source /opt/ros/humble/setup.bash
-cd /home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros2
+cd ${PATH-TO-WS}
 colcon build --event-handlers console_direct+
 source install/local_setup.bash
 ```
@@ -142,7 +140,7 @@ Before launching any demo, run:
 
 ```bash
 source /opt/ros/humble/setup.bash
-cd /home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros2
+cd ${PATH-TO-WS}
 source install/local_setup.bash
 ```
 
