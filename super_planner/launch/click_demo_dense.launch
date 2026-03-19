@@ -1,0 +1,5 @@
+<launch>
+    <node pkg="super_planner" name="fsm_node" type="fsm_node" output="screen">
+        <param name="config_name" value="static_dense.yaml" type="string"></param>
+    </node>
+</launch>

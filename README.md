@@ -142,15 +142,10 @@ roslaunch mission_planner benchmark_high_speed.launch
 roslaunch mission_planner benchmark_dense.launch
 roslaunch mission_planner click_demo.launch
 roslaunch perfect_drone_sim benchmark.launch
-roslaunch super_planner rviz.launch
-```
-
-The following legacy launch files are still present in the repository, but they are **not directly runnable** in the current `ros1` branch because they include missing files under `super_planner/launch/`:
-
-```bash
 roslaunch perfect_drone_sim dense.launch
 roslaunch perfect_drone_sim high_speed.launch
 roslaunch perfect_drone_sim smooth.launch
+roslaunch super_planner rviz.launch
 ```
 
 In the click demo, press `G` to enable the `2D Goal Pose` plugin, then click a position in RViz to set the goal.

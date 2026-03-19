@@ -1,0 +1,5 @@
+<launch>
+    <node pkg="super_planner" name="fsm_node" type="fsm_node" output="screen">
+        <param name="config_name" value="click_smooth_ros1.yaml" type="string"></param>
+    </node>
+</launch>
