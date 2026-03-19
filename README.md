@@ -99,10 +99,7 @@ SUPER serves as the flight platform and navigation system in the video demonstra
 
 This `ros1` branch is fixed to **ROS1 Noetic** and is intended to be built directly with `catkin_make`.
 
-Do not use `scripts/select_ros_version.sh` on this branch. Use the dedicated ROS1 workspace instead:
-
-* Host path: `/home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros1`
-* Path inside the `2004ros1` docker container: `/root/CodeField/Super_and_SplineTrajectory/super_ws_ros1`
+Do not use `scripts/select_ros_version.sh` on this branch.
 
 ## 2.2 Installation
 
@@ -121,22 +118,9 @@ Tested environment:
 
 ## 2.3 Build With catkin_make
 
-If you build inside the provided docker container:
-
-```bash
-docker start 2004ros1
-docker exec -it 2004ros1 /bin/bash -lc '
-source /opt/ros/noetic/setup.bash
-cd /root/CodeField/Super_and_SplineTrajectory/super_ws_ros1
-catkin_make
-'
-```
-
-If you have already entered the container:
-
 ```bash
 source /opt/ros/noetic/setup.bash
-cd /root/CodeField/Super_and_SplineTrajectory/super_ws_ros1
+cd ${PATH-TO-WS}
 catkin_make
 source devel/setup.bash
 ```
@@ -147,26 +131,26 @@ Before launching any demo, run:
 
 ```bash
 source /opt/ros/noetic/setup.bash
-cd /root/CodeField/Super_and_SplineTrajectory/super_ws_ros1
+cd ${PATH-TO-WS}
 source devel/setup.bash
 ```
 
-Recommended entry points:
+Directly runnable launch files in this branch:
 
 ```bash
 roslaunch mission_planner benchmark_high_speed.launch
 roslaunch mission_planner benchmark_dense.launch
 roslaunch mission_planner click_demo.launch
+roslaunch perfect_drone_sim benchmark.launch
+roslaunch super_planner rviz.launch
 ```
 
-Other launch files currently kept in this branch:
+The following legacy launch files are still present in the repository, but they are **not directly runnable** in the current `ros1` branch because they include missing files under `super_planner/launch/`:
 
 ```bash
-roslaunch perfect_drone_sim benchmark.launch
 roslaunch perfect_drone_sim dense.launch
 roslaunch perfect_drone_sim high_speed.launch
 roslaunch perfect_drone_sim smooth.launch
-roslaunch super_planner rviz.launch
 ```
 
 In the click demo, press `G` to enable the `2D Goal Pose` plugin, then click a position in RViz to set the goal.
