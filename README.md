@@ -95,109 +95,66 @@ SUPER serves as the flight platform and navigation system in the video demonstra
 
 # 2 Quick Start
 
-## 2.1 Installation
+## 2.1 This Branch
 
-Install dependencies
+This `ros2` branch is fixed to **ROS2 Humble** and is intended to be built directly with `colcon build`.
+
+Do not use `scripts/select_ros_version.sh` on this branch. Use the dedicated ROS2 workspace instead:
+
+* Workspace path: `/home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros2`
+
+## 2.2 Installation
+
+Install dependencies in the ROS2 environment:
 
 ```bash
-# for MARSIM example
 sudo apt-get install libglfw3-dev libglew-dev libncurses5-dev libncursesw5-dev
-# Eigen [version testd: 3.3.7-2] and soft link 
-sudo apt-get install libeigen3-dev       
-sudo ln -s /usr/include/eigen3/Eigen /usr/include/Eigen
-# dw for backward cpp
-sudo apt-get install libdw-dev
-# for ROS dependency
-sudo apt-get install ros-${YOUR-ROS-VERSION}-mavros* ros-${YOUR-ROS-VERSION}-pcl* ros-${YOUR-ROS-VERSION}-rosfmt
+sudo apt-get install libeigen3-dev libdw-dev
+sudo ln -sf /usr/include/eigen3/Eigen /usr/include/Eigen
+sudo apt-get install ros-humble-mavros* ros-humble-pcl* ros-humble-rosfmt
 ```
 
-Before building the code, select the appropriate ROS version:
+Tested environment:
+
+* Ubuntu 22.04 + ROS2 Humble
+
+## 2.3 Build With colcon
 
 ```bash
-# Use ROS1-noetic
-bash ${PATH-TO-SUPER}/SUPER/scripts/select_ros_version.sh ROS1
-# Use ROS2
-bash ${PATH-TO-SUPER}/SUPER/scripts/select_ros_version.sh ROS2
-```
-
-Tested Environments:
-
-* Ubuntu 20.04 + ROS1 Noetic
-* Ubuntu 20.04 + ROS2 foxy
-* ...
-
-Currently, **ROS1 Noetic** serves as the **Tier 1** supported platform for SUPER. The ROS2 version is still under development and may be unstable, with some issues such as imperfect visualization. We are actively working on improvements.
-
-### Known Build issues
-
-* ...
-
-## 2.2  ROS1 (Noetic) Installation
-```bash
-mkdir -p super_ws/src && cd super_ws/src
-git clone https://github.com/hku-mars/SUPER.git
-cd ..
-catkin_make -DBUILD_TYPE=Release
-```
-
-To test, use one of the following commands:
-
-1. **High-Speed Navigation**
-
-```bash
-cd ${PATH-TO-WS}
-source devel/setup.bash
-roslaunch mission_planner benchmark_high_speed.launch
-```
-
-2. **Agile Flight in Dense Environments**
-
-```bash
-cd ${PATH-TO-WS}
-source devel/setup.bash
-roslaunch mission_planner benchmark_dense.launch
-```
-
-3. **Click and Go Demo**
-
-```
-roslaunch mission_planner click_demo.launch 
-```
-In the click demo, press `G` to enable the `2D Goal Pose` plugin, then click a position in RViz to set the goal.
-## 2.3 ROS2
-
-
-```bash
-mkdir -p super_ws/src && cd super_ws/src
-git clone https://github.com/hku-mars/SUPER.git
-cd ..
-colcon build --symlink-install
-# add to debug:  --event-handlers console_direct+ 
-```
-
-To test, run:
-
-1. **High-speed Navigation**
-
-```bash
-cd ${PATH-TO-WS}
+source /opt/ros/humble/setup.bash
+cd /home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros2
+colcon build
 source install/local_setup.bash
-ros2 launch mission_planner benchmark_high_speed.launch.py
 ```
 
-2. **Agile flights in dense enviroment**
+If you want verbose console output while debugging:
 
 ```bash
-cd ${PATH-TO-WS}
+source /opt/ros/humble/setup.bash
+cd /home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros2
+colcon build --event-handlers console_direct+
 source install/local_setup.bash
-ros2 launch mission_planner benchmark_dense.launch.py     
 ```
 
-3. **Click demo**
+## 2.4 Launch Commands
 
+Before launching any demo, run:
+
+```bash
+source /opt/ros/humble/setup.bash
+cd /home/zdp/CodeField/Super_and_SplineTrajectory/super_ws_ros2
+source install/local_setup.bash
 ```
+
+ROS2 launch files in this branch:
+
+```bash
+ros2 launch mission_planner banchmark_high_speed.launch.py
+ros2 launch mission_planner benchmark_dense.launch.py
 ros2 launch mission_planner click_demo.launch.py
 ```
+
+Note: the high-speed launch file is currently named `banchmark_high_speed.launch.py` in the repository, so the command must use that exact spelling.
 
 ### Real-world deployment
 
