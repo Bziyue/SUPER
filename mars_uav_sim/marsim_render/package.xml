@@ -1,11 +1,14 @@
+<?xml version="1.0"?>
 <package format="2">
-    <version>0.0.0</version>
-    <name>marsim_render</name>
-    <description>marsim_render</description>
-    <maintainer email="renyf@connect.hku.hk">Yunfan Ren</maintainer>
-    <license>BSD</license>
-    <buildtool_depend>ament_cmake</buildtool_depend>
-    <export>
-        <build_type>ament_cmake</build_type>
-    </export>
+  <name>marsim_render</name>
+  <version>0.0.0</version>
+  <description>The marsim_render package</description>
+  <maintainer email="renyf@connect.hku.hk">Yunfan Ren</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>roscpp</build_depend>
+  <build_export_depend>roscpp</build_export_depend>
+  <exec_depend>roscpp</exec_depend>
 </package>
