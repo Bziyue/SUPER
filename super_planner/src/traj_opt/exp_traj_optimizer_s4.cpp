@@ -311,7 +311,10 @@ bool ExpTrajOpt::configureSplineProblem() {
     optimizer_.setSpatialMap(&spatial_map_);
     optimizer_.setAuxiliaryStateMap(nullptr);
     optimizer_.setEnergyWeights(opt_vars.block_energy_cost ? 0.0 : 1.0);
-    optimizer_.setIntegralNumSteps(opt_vars.integral_res);
+    const auto integral_steps_status = optimizer_.setIntegralNumSteps(opt_vars.integral_res);
+    if (!integral_steps_status) {
+        return false;
+    }
 
     SplineTrajectory::OptimizationFlags flags;
     flags.start_p = false;
@@ -340,7 +343,8 @@ bool ExpTrajOpt::configureSplineProblem() {
     bc.end_jerk = opt_vars.tailPVAJ.col(3);
 
     std::vector<double> time_segments(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
-    return optimizer_.setInitState(time_segments, waypoints, 0.0, bc);
+    const auto init_status = optimizer_.setInitState(time_segments, waypoints, 0.0, bc);
+    return init_status.ok;
 }
 
 double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
@@ -351,7 +355,12 @@ double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
         eval_times[i] = time_map.toTime(vars(i));
     }
     integral_cost_.beginEvaluation(&eval_times);
-    double cost = optimizer_.evaluate(vars, grad, time_cost_, integral_cost_);
+    const auto eval_spec = Optimizer::makeEvaluateSpec(time_cost_, integral_cost_, spline_workspace_);
+    const auto eval_result = optimizer_.evaluate(vars, grad, eval_spec);
+    if (!eval_result) {
+        return INFINITY;
+    }
+    double cost = eval_result.cost;
     spatial_map_.addNormPenalty(vars, opt_vars.temporalDim, opt_vars.spatialDim, grad, cost);
     opt_vars.penalty_log = integral_cost_.getPenaltyLog();
     return cost;
@@ -425,7 +434,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     VecDf grad(x.size());
     minCostFunctional = evaluateCurrentSplineCost(x, grad);
     opt_vars.iter_num = optimizer_iters;
-    const SplineType *optimal_spline = optimizer_.getOptimalSpline();
+    const SplineType *optimal_spline = &optimizer_.getWorkingSpline(spline_workspace_);
     if (optimal_spline != nullptr) {
         opt_vars.times.resize(optimal_spline->getTrajectory().getNumSegments());
         for (int i = 0; i < opt_vars.times.size(); ++i) {

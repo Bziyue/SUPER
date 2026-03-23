@@ -95,7 +95,10 @@ bool BackupTrajOpt::configureSplineProblem() {
     optimizer_.setSpatialMap(&spatial_map_);
     optimizer_.setAuxiliaryStateMap(&auxiliary_state_map_);
     optimizer_.setEnergyWeights(opt_vars.block_energy_cost ? 0.0 : 1.0);
-    optimizer_.setIntegralNumSteps(opt_vars.integral_res);
+    const auto integral_steps_status = optimizer_.setIntegralNumSteps(opt_vars.integral_res);
+    if (!integral_steps_status) {
+        return false;
+    }
 
     SplineTrajectory::OptimizationFlags flags;
     flags.start_p = false;
@@ -131,13 +134,19 @@ bool BackupTrajOpt::configureSplineProblem() {
 
     std::vector<double> time_segments(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
     opt_vars.temporalDim = opt_vars.piece_num;
-    return optimizer_.setInitState(time_segments, waypoints, 0.0, bc);
+    const auto init_status = optimizer_.setInitState(time_segments, waypoints, 0.0, bc);
+    return init_status.ok;
 }
 
 double BackupTrajOpt::evaluateCurrentSplineCost(const Eigen::VectorXd &vars, Eigen::VectorXd &grad) {
     ++opt_vars.iter_num;
     integral_cost_.beginEvaluation();
-    double cost = optimizer_.evaluate(vars, grad, time_cost_, integral_cost_);
+    const auto eval_spec = Optimizer::makeEvaluateSpec(time_cost_, integral_cost_, spline_workspace_);
+    const auto eval_result = optimizer_.evaluate(vars, grad, eval_spec);
+    if (!eval_result) {
+        return INFINITY;
+    }
+    double cost = eval_result.cost;
     spatial_map_.addNormPenalty(vars, opt_vars.temporalDim, opt_vars.spatialDim, grad, cost);
     opt_vars.penalty_log = integral_cost_.getPenaltyLog();
     return cost;
@@ -202,7 +211,7 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     Eigen::VectorXd grad(x.size());
     minCostFunctional = evaluateCurrentSplineCost(x, grad);
     opt_vars.iter_num = optimizer_iters;
-    const SplineType *optimal_spline = optimizer_.getOptimalSpline();
+    const SplineType *optimal_spline = &optimizer_.getWorkingSpline(spline_workspace_);
     opt_vars.penalty_log(0) = (!opt_vars.block_energy_cost && optimal_spline != nullptr) ? optimal_spline->getEnergy() : 0.0;
 
     const int aux_offset = opt_vars.temporalDim + opt_vars.spatialDim;
