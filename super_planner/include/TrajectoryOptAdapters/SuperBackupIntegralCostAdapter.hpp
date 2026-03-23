@@ -45,6 +45,7 @@ public:
     double operator()(double /*t*/,
                       double /*t_global*/,
                       int /*seg_idx*/,
+                      int /*step_in_seg*/,
                       const Eigen::Vector3d &p,
                       const Eigen::Vector3d &v,
                       const Eigen::Vector3d &a,
