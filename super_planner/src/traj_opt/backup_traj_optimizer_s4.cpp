@@ -100,17 +100,6 @@ bool BackupTrajOpt::configureSplineProblem() {
         return false;
     }
 
-    SplineTrajectory::OptimizationFlags flags;
-    flags.start_p = false;
-    flags.end_p = true;
-    flags.start_v = false;
-    flags.end_v = false;
-    flags.start_a = false;
-    flags.end_a = false;
-    flags.start_j = false;
-    flags.end_j = false;
-    optimizer_.setOptimizationFlags(flags);
-
     StatePVAJ head_state;
     opt_vars.exp_traj.getState(opt_vars.ts, head_state);
     opt_vars.headPVAJ = head_state;
@@ -134,8 +123,16 @@ bool BackupTrajOpt::configureSplineProblem() {
 
     std::vector<double> time_segments(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
     opt_vars.temporalDim = opt_vars.piece_num;
+    optimizer_.clearOptimizationMask();
     const auto init_status = optimizer_.setInitState(time_segments, waypoints, 0.0, bc);
-    return init_status.ok;
+    if (!init_status.ok) {
+        return false;
+    }
+
+    auto mask = Optimizer::makeFullOptimizationMask(opt_vars.piece_num);
+    mask.waypoints.front() = static_cast<uint8_t>(0);
+    const auto mask_status = optimizer_.setOptimizationMask(mask);
+    return mask_status.ok;
 }
 
 double BackupTrajOpt::evaluateCurrentSplineCost(const Eigen::VectorXd &vars, Eigen::VectorXd &grad) {
