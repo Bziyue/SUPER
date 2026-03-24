@@ -7,9 +7,21 @@ sudo apt-get install libdw-dev
 
 
 ```bash
-  mkdir build
-  cd build/
-  cmake -DBUILD_SHARED_LIBS=TRUE ..
-  make
-  sudo make install
+source /opt/ros/noetic/setup.bash
+cd ${PATH-TO-WS}
+catkin_make --pkg super_planner
+source devel/setup.bash
+```
+
+Launch examples:
+
+```bash
+source /opt/ros/noetic/setup.bash
+cd ${PATH-TO-WS}
+source devel/setup.bash
+
+roslaunch mission_planner benchmark_high_speed.launch
+roslaunch mission_planner benchmark_dense.launch
+roslaunch mission_planner click_demo.launch
+roslaunch super_planner rviz.launch
 ```

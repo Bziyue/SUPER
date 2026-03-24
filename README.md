@@ -125,9 +125,18 @@ catkin_make
 source devel/setup.bash
 ```
 
+If you are only updating the planner and want a faster rebuild:
+
+```bash
+source /opt/ros/noetic/setup.bash
+cd ${PATH-TO-WS}
+catkin_make --pkg super_planner
+source devel/setup.bash
+```
+
 ## 2.4 Launch Commands
 
-Before launching any demo, run:
+Before launching any demo in this branch, run:
 
 ```bash
 source /opt/ros/noetic/setup.bash
