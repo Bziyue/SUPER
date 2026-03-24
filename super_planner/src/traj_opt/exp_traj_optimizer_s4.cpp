@@ -316,17 +316,6 @@ bool ExpTrajOpt::configureSplineProblem() {
         return false;
     }
 
-    SplineTrajectory::OptimizationFlags flags;
-    flags.start_p = false;
-    flags.end_p = false;
-    flags.start_v = false;
-    flags.end_v = false;
-    flags.start_a = false;
-    flags.end_a = false;
-    flags.start_j = false;
-    flags.end_j = false;
-    optimizer_.setOptimizationFlags(flags);
-
     spline_opt::WaypointsType waypoints(opt_vars.piece_num + 1, 3);
     waypoints.row(0) = opt_vars.headPVAJ.col(0).transpose();
     for (int i = 0; i < opt_vars.piece_num - 1; ++i) {
@@ -344,7 +333,10 @@ bool ExpTrajOpt::configureSplineProblem() {
 
     std::vector<double> time_segments(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
     const auto init_status = optimizer_.setInitState(time_segments, waypoints, 0.0, bc);
-    return init_status.ok;
+    if (!init_status.ok) {
+        return false;
+    }
+    return true;
 }
 
 double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
