@@ -125,18 +125,27 @@ colcon build
 source install/local_setup.bash
 ```
 
+If you are iterating mainly on the planner stack, a smaller package-scoped build is usually more convenient:
+
+```bash
+source /opt/ros/humble/setup.bash
+cd ${PATH-TO-WS}
+colcon build --packages-up-to super_planner
+source install/local_setup.bash
+```
+
 If you want verbose console output while debugging:
 
 ```bash
 source /opt/ros/humble/setup.bash
 cd ${PATH-TO-WS}
-colcon build --event-handlers console_direct+
+colcon build --packages-up-to super_planner --event-handlers console_direct+
 source install/local_setup.bash
 ```
 
 ## 2.4 Launch Commands
 
-Before launching any demo, run:
+Before launching any demo in this branch, run:
 
 ```bash
 source /opt/ros/humble/setup.bash
