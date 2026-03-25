@@ -97,13 +97,11 @@ SUPER serves as the flight platform and navigation system in the video demonstra
 
 ## 2.1 Branches
 
-This code line is the **ROS1 Noetic** version of SUPER and is intended to be built directly with `catkin_make`.
-
-The `master` branch is kept in sync with `ros1`, so both branches currently contain the same ROS1 code.
+This `master` branch is the **ROS1 Noetic** version of SUPER and is intended to be built directly with `catkin_make`.
 
 If you need the ROS2 version, switch to the [`ros2` branch](https://github.com/Bziyue/SUPER/tree/ros2).
 
-Do not use `scripts/select_ros_version.sh` on `master` or `ros1`.
+Do not use `scripts/select_ros_version.sh` on `master`.
 
 ## 2.2 Installation
 
