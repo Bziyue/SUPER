@@ -156,12 +156,12 @@ source install/local_setup.bash
 ROS2 launch files in this branch:
 
 ```bash
-ros2 launch mission_planner banchmark_high_speed.launch.py
+ros2 launch mission_planner benchmark_high_speed.launch.py
 ros2 launch mission_planner benchmark_dense.launch.py
 ros2 launch mission_planner click_demo.launch.py
 ```
 
-Note: the high-speed launch file is currently named `banchmark_high_speed.launch.py` in the repository, so the command must use that exact spelling.
+Note: `benchmark_high_speed.launch.py` is the preferred ROS2 launch entry for the high-speed benchmark.
 
 ### Real-world deployment
 

@@ -19,7 +19,7 @@ source /opt/ros/humble/setup.bash
 cd ${PATH-TO-WS}
 source install/local_setup.bash
 
-ros2 launch mission_planner banchmark_high_speed.launch.py
+ros2 launch mission_planner benchmark_high_speed.launch.py
 ros2 launch mission_planner benchmark_dense.launch.py
 ros2 launch mission_planner click_demo.launch.py
 ```
