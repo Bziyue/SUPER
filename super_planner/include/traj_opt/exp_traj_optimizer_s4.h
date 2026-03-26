@@ -70,7 +70,7 @@ namespace traj_opt {
         std::ofstream penalty_log;
         ros_interface::RosInterface::Ptr ros_ptr_;
         Optimizer optimizer_;
-        Optimizer::Workspace spline_workspace_;
+        Optimizer::OptimizationContext spline_context_;
         SpatialMap spatial_map_;
         spline_opt::LinearTimeCost time_cost_;
         spline_opt::ExpPenaltyIntegralCost integral_cost_;
