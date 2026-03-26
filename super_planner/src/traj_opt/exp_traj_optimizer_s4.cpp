@@ -308,11 +308,13 @@ bool ExpTrajOpt::configureSplineProblem() {
                          opt_vars.penaltyWeights,
                          &opt_vars.quadrotor_flatness);
 
-    optimizer_.setSpatialMap(&spatial_map_);
-    optimizer_.setAuxiliaryStateMap(nullptr);
-    optimizer_.setEnergyWeights(opt_vars.block_energy_cost ? 0.0 : 1.0);
-    const auto integral_steps_status = optimizer_.setIntegralNumSteps(opt_vars.integral_res);
-    if (!integral_steps_status) {
+    Optimizer::OptimizerConfig config;
+    config.spatial_map = &spatial_map_;
+    config.auxiliary_state_map = nullptr;
+    config.rho_energy = opt_vars.block_energy_cost ? 0.0 : 1.0;
+    config.integral_num_steps = opt_vars.integral_res;
+    const auto config_status = optimizer_.setConfig(config);
+    if (!config_status) {
         return false;
     }
 
@@ -331,12 +333,13 @@ bool ExpTrajOpt::configureSplineProblem() {
     bc.end_acceleration = opt_vars.tailPVAJ.col(2);
     bc.end_jerk = opt_vars.tailPVAJ.col(3);
 
-    std::vector<double> time_segments(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
-    const auto init_status = optimizer_.setInitState(time_segments, waypoints, 0.0, bc);
-    if (!init_status.ok) {
-        return false;
-    }
-    return true;
+    Optimizer::ProblemDefinition problem;
+    problem.time_segments.assign(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
+    problem.waypoints = waypoints;
+    problem.start_time = 0.0;
+    problem.bc = bc;
+    const auto prepare_status = optimizer_.prepareContext(problem, spline_context_);
+    return prepare_status.ok;
 }
 
 double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
@@ -347,8 +350,8 @@ double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
         eval_times[i] = time_map.toTime(vars(i));
     }
     integral_cost_.beginEvaluation(&eval_times);
-    const auto eval_spec = Optimizer::makeEvaluateSpec(time_cost_, integral_cost_, spline_workspace_);
-    const auto eval_result = optimizer_.evaluate(vars, grad, eval_spec);
+    const auto eval_spec = Optimizer::makeEvaluateSpec(time_cost_, integral_cost_);
+    const auto eval_result = optimizer_.evaluate(spline_context_, vars, grad, eval_spec);
     if (!eval_result) {
         return INFINITY;
     }
@@ -384,7 +387,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         return INFINITY;
     }
 
-    VecDf x = optimizer_.generateInitialGuess();
+    VecDf x = optimizer_.generateInitialGuess(spline_context_);
 
     opt_vars.init_ts = opt_vars.times;
     opt_vars.init_ps.clear();
@@ -426,7 +429,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     VecDf grad(x.size());
     minCostFunctional = evaluateCurrentSplineCost(x, grad);
     opt_vars.iter_num = optimizer_iters;
-    const SplineType *optimal_spline = &optimizer_.getWorkingSpline(spline_workspace_);
+    const SplineType *optimal_spline = &optimizer_.getWorkingSpline(spline_context_);
     if (optimal_spline != nullptr) {
         opt_vars.times.resize(optimal_spline->getTrajectory().getNumSegments());
         for (int i = 0; i < opt_vars.times.size(); ++i) {
