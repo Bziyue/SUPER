@@ -1,17 +1,16 @@
 #pragma once
 
+#include <traj_opt/spline/IntegralPointInfo.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/AccelerationBoundPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/AngularRateBoundPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/FlatnessState.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/JerkBoundPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/PolytopePositionPenalty.hpp>
-#include <TrajectoryOptComponents/SpatialCosts/SegmentBoundaryAttractorPenalty.hpp>
+#include <TrajectoryOptComponents/SpatialCosts/WaypointAttractorPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/ThrustBandPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/VelocityBoundPenalty.hpp>
 #include <utils/geometry/quadrotor_flatness.hpp>
 #include <utils/header/type_utils.hpp>
-
-#include <vector>
 
 namespace traj_opt_adapters
 {
@@ -46,19 +45,14 @@ public:
         flatmap = fm;
     }
 
-    void beginEvaluation(const std::vector<double> *times)
+    void beginEvaluation() const
     {
-        segment_times_ = times;
-        max_violation_.resize(8);
         max_violation_.setZero();
     }
 
     const super_utils::VecDf &getPenaltyLog() const { return max_violation_; }
 
-    double operator()(double t,
-                      double /*t_global*/,
-                      int seg_idx,
-                      int /*step_in_seg*/,
+    double operator()(const SplineTrajectory::IntegralPointInfo &point,
                       const Eigen::Vector3d &p,
                       const Eigen::Vector3d &v,
                       const Eigen::Vector3d &a,
@@ -90,23 +84,26 @@ public:
         Eigen::Vector3d grad_acc = Eigen::Vector3d::Zero();
         Eigen::Vector3d grad_jer = Eigen::Vector3d::Zero();
 
-        const int poly_id = (*h_poly_idx)(seg_idx);
+        const int poly_id = (*h_poly_idx)(point.segment_index);
         local_cost += traj_opt_components::accumulatePolytopePositionPenalty((*h_polys)[poly_id],
                                                                              p,
                                                                              smooth_eps,
                                                                              weight_pos,
                                                                              grad_pos,
                                                                              &max_violation_(1));
-        local_cost += traj_opt_components::accumulateSegmentBoundaryAttractorPenalty(t,
-                                                                                     seg_idx,
-                                                                                     segment_times_,
-                                                                                     waypoint_attractor,
-                                                                                     waypoint_attractor_dead_d,
-                                                                                     p,
-                                                                                     smooth_eps,
-                                                                                     weight_att,
-                                                                                     grad_pos,
-                                                                                     &max_violation_(5));
+        const int boundary_index = point.interiorBoundaryIndex();
+        if (boundary_index >= 0 && waypoint_attractor != nullptr &&
+            waypoint_attractor_dead_d != nullptr)
+        {
+            local_cost += traj_opt_components::accumulateWaypointAttractorPenalty(
+                p,
+                waypoint_attractor->col(boundary_index),
+                (*waypoint_attractor_dead_d)(boundary_index),
+                smooth_eps,
+                weight_att,
+                grad_pos,
+                &max_violation_(5));
+        }
         local_cost += traj_opt_components::accumulateVelocityBoundPenalty(v,
                                                                           magnitude_bounds(0),
                                                                           smooth_eps,
@@ -177,7 +174,6 @@ public:
     }
 
 private:
-    mutable const std::vector<double> *segment_times_ = nullptr;
     mutable super_utils::VecDf max_violation_{super_utils::VecDf::Zero(8)};
 };
 } // namespace traj_opt_adapters

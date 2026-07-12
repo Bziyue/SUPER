@@ -56,14 +56,17 @@ traj_opt:
     opt_accuracy: 5.0e-6
     scale_factor: 1.0
     integral_reso: 15
-    smooth_eps: 0.01
+    # A wider transition avoids an excessively sharp angular-rate boundary.
+    # The resulting omega excess stays well below penna_margin in regression tests.
+    smooth_eps: 0.05
     penna_t: 1.0e+8
     penna_pos: 5.0e+8
     penna_vel: 5.0e+8
     penna_acc: 5.0e+8
-    penna_jerk: -5.0e+11
-    penna_attract: -1.0e+7
-    penna_omg: 5.0e+8
+    # Zero explicitly disables a penalty; negative weights are not penalties.
+    penna_jerk: 0.0
+    penna_attract: 0.0
+    penna_omg: 1.0e+8
     penna_thr: 5.0e+8
 
   backup_traj:
