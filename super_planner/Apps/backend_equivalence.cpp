@@ -72,6 +72,9 @@ int main(int argc, char **argv)
     std::cout << "[EQ-RESULT] ok=" << ok
               << " pieces=" << trajectory.getPieceNum()
               << " duration=" << trajectory.getTotalDuration() << '\n';
+    if (!ok || trajectory.getPieceNum() == 0) {
+        return 1;
+    }
     std::cout << std::setprecision(17);
     for (double fraction : {0.0, 0.25, 0.5, 0.75, 1.0}) {
         const double t = fraction * trajectory.getTotalDuration();

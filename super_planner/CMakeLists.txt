@@ -78,6 +78,13 @@ target_link_libraries(fsm_node
 
 add_executable(backend_equivalence Apps/backend_equivalence.cpp)
 target_link_libraries(backend_equivalence super)
+add_custom_target(check_backend_stability
+  COMMAND ${PYTHON_EXECUTABLE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check_backend_stability.py
+          $<TARGET_FILE:backend_equivalence>
+  DEPENDS backend_equivalence
+  USES_TERMINAL
+)
 
 if(CURSES_FOUND)
   include_directories(${CURSES_INCLUDE_DIR})
