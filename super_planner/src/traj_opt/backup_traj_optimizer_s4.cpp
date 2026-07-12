@@ -138,7 +138,6 @@ bool BackupTrajOpt::configureSplineProblem() {
 
 double BackupTrajOpt::evaluateCurrentSplineCost(const Eigen::VectorXd &vars, Eigen::VectorXd &grad) {
     ++opt_vars.iter_num;
-    integral_cost_.beginEvaluation();
     const auto eval_spec = Optimizer::makeEvaluateSpec(time_cost_, integral_cost_);
     const auto eval_result = optimizer_.evaluate(spline_context_, vars, grad, eval_spec);
     if (!eval_result) {

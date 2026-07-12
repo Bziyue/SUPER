@@ -344,20 +344,24 @@ bool ExpTrajOpt::configureSplineProblem() {
 
 double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
     ++opt_vars.iter_num;
-    std::vector<double> eval_times(opt_vars.temporalDim);
-    SplineTrajectory::QuadInvTimeMap time_map;
-    for (int i = 0; i < opt_vars.temporalDim; ++i) {
-        eval_times[i] = time_map.toTime(vars(i));
-    }
-    integral_cost_.beginEvaluation(&eval_times);
     const auto eval_spec = Optimizer::makeEvaluateSpec(time_cost_, integral_cost_);
     const auto eval_result = optimizer_.evaluate(spline_context_, vars, grad, eval_spec);
     if (!eval_result) {
+        grad.setZero();
         return INFINITY;
     }
     double cost = eval_result.cost;
+    if (!std::isfinite(cost) || !grad.allFinite()) {
+        grad.setZero();
+        return INFINITY;
+    }
     spatial_map_.addNormPenalty(vars, opt_vars.temporalDim, opt_vars.spatialDim, grad, cost);
-    opt_vars.penalty_log = integral_cost_.getPenaltyLog();
+    if (opt_vars.iter_num == 1 && std::getenv("SUPER_EQUIVALENCE_TRACE") != nullptr) {
+        std::cout << std::setprecision(17)
+                  << "[EQ-FIRST] cost=" << cost << '\n'
+                  << "[EQ-X] " << vars.transpose() << '\n'
+                  << "[EQ-G] " << grad.transpose() << '\n';
+    }
     return cost;
 }
 
@@ -425,10 +429,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                     this,
                                     lbfgs_params);
 
-    const int optimizer_iters = opt_vars.iter_num;
-    VecDf grad(x.size());
-    minCostFunctional = evaluateCurrentSplineCost(x, grad);
-    opt_vars.iter_num = optimizer_iters;
+    const auto sync_status = optimizer_.synchronizeWorkingState(spline_context_, x);
+    if (!sync_status) {
+        ret = -1;
+    }
+    opt_vars.penalty_log = integral_cost_.getPenaltyLog();
     const SplineType *optimal_spline = &optimizer_.getWorkingSpline(spline_context_);
     if (optimal_spline != nullptr) {
         opt_vars.times.resize(optimal_spline->getTrajectory().getNumSegments());

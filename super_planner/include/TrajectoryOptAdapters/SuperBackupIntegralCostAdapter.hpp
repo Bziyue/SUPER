@@ -1,5 +1,6 @@
 #pragma once
 
+#include <traj_opt/spline/IntegralPointInfo.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/AccelerationBoundPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/AngularRateBoundPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/FlatnessState.hpp>
@@ -34,18 +35,14 @@ public:
         flatmap = fm;
     }
 
-    void beginEvaluation()
+    void beginEvaluation() const
     {
-        max_violation_.resize(8);
         max_violation_.setZero();
     }
 
     const super_utils::VecDf &getPenaltyLog() const { return max_violation_; }
 
-    double operator()(double /*t*/,
-                      double /*t_global*/,
-                      int /*seg_idx*/,
-                      int /*step_in_seg*/,
+    double operator()(const SplineTrajectory::IntegralPointInfo & /*point*/,
                       const Eigen::Vector3d &p,
                       const Eigen::Vector3d &v,
                       const Eigen::Vector3d &a,

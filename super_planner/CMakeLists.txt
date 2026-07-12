@@ -76,6 +76,9 @@ target_link_libraries(fsm_node
   super
 )
 
+add_executable(backend_equivalence Apps/backend_equivalence.cpp)
+target_link_libraries(backend_equivalence super)
+
 if(CURSES_FOUND)
   include_directories(${CURSES_INCLUDE_DIR})
 
