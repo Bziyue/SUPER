@@ -97,10 +97,6 @@ bool BackupTrajOpt::configureSplineProblem() {
     config.auxiliary_state_map = &auxiliary_state_map_;
     config.rho_energy = opt_vars.block_energy_cost ? 0.0 : 1.0;
     config.integral_num_steps = opt_vars.integral_res;
-    const auto config_status = optimizer_.setConfig(config);
-    if (!config_status) {
-        return false;
-    }
 
     StatePVAJ head_state;
     opt_vars.exp_traj.getState(opt_vars.ts, head_state);
@@ -132,7 +128,7 @@ bool BackupTrajOpt::configureSplineProblem() {
     problem.start_time = 0.0;
     problem.bc = bc;
     problem.mask = mask;
-    const auto prepare_status = optimizer_.prepareContext(problem, spline_context_);
+    const auto prepare_status = optimizer_.prepareContext(problem, spline_context_, config);
     return prepare_status.ok;
 }
 

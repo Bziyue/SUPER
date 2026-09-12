@@ -313,10 +313,6 @@ bool ExpTrajOpt::configureSplineProblem() {
     config.auxiliary_state_map = nullptr;
     config.rho_energy = opt_vars.block_energy_cost ? 0.0 : 1.0;
     config.integral_num_steps = opt_vars.integral_res;
-    const auto config_status = optimizer_.setConfig(config);
-    if (!config_status) {
-        return false;
-    }
 
     spline_opt::WaypointsType waypoints(opt_vars.piece_num + 1, 3);
     waypoints.row(0) = opt_vars.headPVAJ.col(0).transpose();
@@ -338,7 +334,7 @@ bool ExpTrajOpt::configureSplineProblem() {
     problem.waypoints = waypoints;
     problem.start_time = 0.0;
     problem.bc = bc;
-    const auto prepare_status = optimizer_.prepareContext(problem, spline_context_);
+    const auto prepare_status = optimizer_.prepareContext(problem, spline_context_, config);
     return prepare_status.ok;
 }
 

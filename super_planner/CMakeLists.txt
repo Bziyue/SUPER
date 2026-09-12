@@ -78,6 +78,8 @@ target_link_libraries(fsm_node
 
 add_executable(backend_equivalence Apps/backend_equivalence.cpp)
 target_link_libraries(backend_equivalence super)
+add_dependencies(backend_equivalence ${catkin_EXPORTED_TARGETS})
+add_dependencies(fsm_node ${catkin_EXPORTED_TARGETS})
 add_custom_target(check_backend_stability
   COMMAND ${PYTHON_EXECUTABLE}
           ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check_backend_stability.py
@@ -109,3 +111,5 @@ if(CURSES_FOUND)
 else()
   message(WARNING "Curses not found, skipping read_replan_log and traj_opt_tuning.")
 endif()
+
+add_executable(super_spline_map_regression Apps/spline_map_regression.cpp)

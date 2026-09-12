@@ -1,6 +1,6 @@
 #pragma once
 
-#include <traj_opt/spline/IntegralPointInfo.hpp>
+#include <traj_opt/spline/SplineOptimizer.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/AccelerationBoundPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/AngularRateBoundPenalty.hpp>
 #include <TrajectoryOptComponents/SpatialCosts/FlatnessState.hpp>
@@ -52,19 +52,23 @@ public:
 
     const super_utils::VecDf &getPenaltyLog() const { return max_violation_; }
 
+    static constexpr int kDerivativeOrder = 3;
+
+    /** @brief Evaluate physical penalties and accumulate unweighted sample partials.
+     * @param point Piece/quadrature metadata on the current trajectory time axis.
+     * @param state Position, velocity, acceleration and jerk in the planner frame and SI units.
+     * @param[in,out] gradient Zero-initialized integrand partials, accumulated by this adapter.
+     * @return Nonnegative penalty; referenced geometry/flatness data must outlive evaluation.
+     * @note Serial evaluation only: diagnostics and the borrowed flatness map are mutable. */
     double operator()(const SplineTrajectory::IntegralPointInfo &point,
-                      const Eigen::Vector3d &p,
-                      const Eigen::Vector3d &v,
-                      const Eigen::Vector3d &a,
-                      const Eigen::Vector3d &j,
-                      const Eigen::Vector3d & /*s*/,
-                      Eigen::Vector3d &gp,
-                      Eigen::Vector3d &gv,
-                      Eigen::Vector3d &ga,
-                      Eigen::Vector3d &gj,
-                      Eigen::Vector3d & /*gs*/,
-                      double & /*gt*/) const
+                      const SplineTrajectory::SampleState<3> &state,
+                      SplineTrajectory::SampleGradient<3> &gradient) const
     {
+        const auto &p = state.p; const auto &v = state.v;
+        const auto &a = state.a; const auto &j = state.j;
+        auto &gp = gradient.p; auto &gv = gradient.v;
+        auto &ga = gradient.a; auto &gj = gradient.j;
+
         if (!h_polys || !h_poly_idx || !flatmap)
         {
             return 0.0;
