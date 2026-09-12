@@ -1,4 +1,5 @@
 #include <traj_opt/exp_traj_optimizer_s4.h>
+#include <traj_opt/backup_traj_optimizer_s4.h>
 #include <ros_interface/ros1/fsm_ros1.hpp>
 
 #include <cstdlib>
@@ -21,6 +22,43 @@ geometry_utils::Polytope makeBox(double xmin, double xmax)
               0.0, 0.0,-1.0, -2.0;
     return geometry_utils::Polytope(planes);
 }
+
+/** @brief Solve backups with both duration layouts and both spatial maps, checking C3 seams. */
+int checkBackups(const ros_interface::RosInterface::Ptr &interface, const std::string &config_path)
+{
+    Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+    coefficients(0, 6) = 0.5;
+    geometry_utils::Trajectory reference;
+    reference.emplace_back(4.0, coefficients);
+    for (bool uniform : {false, true}) {
+        for (int spatial_mode : {1, 2}) {
+            traj_opt::Config config(config_path, "backup_traj");
+            config.uniform_time_en = uniform;
+            config.pos_constraint_type = spatial_mode;
+            config.piece_num = 2;
+            config.print_optimizer_log = false;
+            config.save_log_en = false;
+            traj_opt::BackupTrajOpt optimizer(config, interface);
+            super_utils::VecDf times(2);
+            times << 1.2, 1.2;
+            super_utils::vec_Vec3f points;
+            points.emplace_back(1.0, 0.0, 0.0);
+            points.emplace_back(1.5, 0.0, 0.0);
+            geometry_utils::Trajectory backup;
+            double switch_time = 0.5;
+            if (!optimizer.optimize(reference, 0.2, 0.8, 0.5, makeBox(-1.0, 4.0),
+                                    times, points, backup, switch_time)) return 1;
+            if (backup.empty() || switch_time < 0.2 || switch_time > 0.8) return 2;
+            const double seam_error = (backup.getState(0.0) - reference.getState(switch_time)).norm();
+            if (seam_error > 1e-7) return 3;
+            if (uniform && std::abs(backup[0].getDuration() - backup[1].getDuration()) > 1e-12) return 4;
+            std::cout << "[BACKUP] uniform=" << uniform << " spatial_mode=" << spatial_mode
+                      << " duration=" << backup.getTotalDuration() << " seam_error=" << seam_error << '\n';
+        }
+    }
+    return 0;
+}
+
 }
 
 int main(int argc, char **argv)
@@ -30,6 +68,7 @@ int main(int argc, char **argv)
     auto ros_interface = std::make_shared<ros_interface::Ros1Interface>(node);
 
     const std::string config_path = std::string(ROOT_DIR) + "config/static_high_speed.yaml";
+    if (argc > 1 && std::string(argv[1]) == "backup") return checkBackups(ros_interface, config_path);
     traj_opt::Config config(config_path, "exp_traj");
     config.print_optimizer_log = true;
     if (argc > 2) config.opt_accuracy = std::stod(argv[2]);

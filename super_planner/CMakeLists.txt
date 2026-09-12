@@ -8,6 +8,8 @@ add_compile_options(-Werror=return-type)
 add_compile_options(-Werror=unused-variable)
 add_compile_options(-Werror=unused-but-set-variable)
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_definitions(-DORIGIN_AT_CORNER)
 add_definitions(-DFMT_HEADER_ONLY)
@@ -113,3 +115,7 @@ else()
 endif()
 
 add_executable(super_spline_map_regression Apps/spline_map_regression.cpp)
+
+add_executable(super_spline_auxiliary_regression Apps/spline_auxiliary_regression.cpp)
+target_link_libraries(super_spline_auxiliary_regression super)
+add_dependencies(super_spline_auxiliary_regression ${catkin_EXPORTED_TARGETS})

@@ -4,17 +4,19 @@
 
 namespace traj_opt_adapters
 {
-template <typename SplineType>
-inline geometry_utils::Trajectory splineToSuperTrajectory(const SplineType &spline)
+/** @brief Copy an ascending-power polynomial into SUPER's descending-power trajectory storage.
+ * @param ppoly Valid polynomial, borrowed only for this call.
+ * @return Owning SUPER trajectory with the same segment durations and a local time origin of zero. */
+template <typename Polynomial>
+inline geometry_utils::Trajectory splineToSuperTrajectory(const Polynomial &ppoly)
 {
     geometry_utils::Trajectory traj;
-    const auto &ppoly = spline.getTrajectory();
     traj.clear();
-    traj.reserve(ppoly.getNumSegments());
-    for (int i = 0; i < ppoly.getNumSegments(); ++i)
+    traj.reserve(ppoly.numSegments());
+    for (int i = 0; i < ppoly.numSegments(); ++i)
     {
         const auto seg = ppoly[i];
-        traj.emplace_back(seg.duration(), seg.getCoeffs().transpose().rowwise().reverse());
+        traj.emplace_back(seg.duration(), seg.coefficients().transpose().rowwise().reverse());
     }
     return traj;
 }

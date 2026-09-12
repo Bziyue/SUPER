@@ -54,22 +54,6 @@ bool BackupTrajOpt::setupProblemAndCheck() {
         return false;
     }
 
-    // 2. Reset the problem dimension
-    if (opt_vars.uniform_time_en) {
-        opt_vars.temporalDim = 1;
-    } else {
-        opt_vars.temporalDim = opt_vars.piece_num;
-    }
-    switch (opt_vars.pos_constraint_type) {
-        case 1: {
-            opt_vars.spatialDim = 3 * opt_vars.piece_num;
-            break;
-        }
-        default: {
-            opt_vars.spatialDim = opt_vars.vPolytope.cols() * opt_vars.piece_num;
-        }
-    }
-
     opt_vars.points.resize(3, opt_vars.piece_num);
     return true;
 }
@@ -92,11 +76,9 @@ bool BackupTrajOpt::configureSplineProblem() {
                                opt_vars.piece_num,
                                opt_vars.ts);
 
-    Optimizer::OptimizerConfig config;
-    config.spatial_map = &spatial_map_;
-    config.auxiliary_state_map = &auxiliary_state_map_;
-    config.rho_energy = opt_vars.block_energy_cost ? 0.0 : 1.0;
-    config.integral_num_steps = opt_vars.integral_res;
+    SplineTrajectory::OptimizerOptions config;
+    config.energy_weight = opt_vars.block_energy_cost ? 0.0 : 1.0;
+    config.integration_steps = opt_vars.integral_res;
 
     StatePVAJ head_state;
     opt_vars.exp_traj.getState(opt_vars.ts, head_state);
@@ -119,29 +101,29 @@ bool BackupTrajOpt::configureSplineProblem() {
     bc.end_acceleration.setZero();
     bc.end_jerk.setZero();
 
-    opt_vars.temporalDim = opt_vars.piece_num;
-    auto mask = Optimizer::makeFullOptimizationMask(opt_vars.piece_num);
-    mask.waypoints.front() = static_cast<uint8_t>(0);
-    Optimizer::ProblemDefinition problem;
-    problem.time_segments.assign(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
+    // Uniform time is represented only by its auxiliary coordinate.
+    SplineTrajectory::OptimizationMask mask;
+    mask.time.assign(opt_vars.piece_num, opt_vars.uniform_time_en ? 0 : 1);
+    mask.waypoints.assign(opt_vars.piece_num + 1, 1);
+    mask.waypoints.front() = 0;
+    Optimizer::Problem problem;
+    problem.durations.assign(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
     problem.waypoints = waypoints;
     problem.start_time = 0.0;
-    problem.bc = bc;
+    problem.boundary = bc;
     problem.mask = mask;
-    const auto prepare_status = optimizer_.prepareContext(problem, spline_context_, config);
-    return prepare_status.ok;
+    const auto prepare_status = optimizer_.prepare(problem, config);
+    return static_cast<bool>(prepare_status);
 }
 
 double BackupTrajOpt::evaluateCurrentSplineCost(const Eigen::VectorXd &vars, Eigen::VectorXd &grad) {
     ++opt_vars.iter_num;
-    const auto eval_spec = Optimizer::makeEvaluateSpec(time_cost_, integral_cost_);
-    const auto eval_result = optimizer_.evaluate(spline_context_, vars, grad, eval_spec);
+    Objective objective{time_cost_, integral_cost_, {spatial_map_}};
+    const auto eval_result = optimizer_.evaluate(vars, grad, objective);
     if (!eval_result) {
         return INFINITY;
     }
     double cost = eval_result.cost;
-    spatial_map_.addNormPenalty(vars, opt_vars.temporalDim, opt_vars.spatialDim, grad, cost);
-    opt_vars.penalty_log = integral_cost_.getPenaltyLog();
     return cost;
 }
 
@@ -154,7 +136,7 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     if(opt_vars.given_init_ts_and_ps){
         opt_vars.times = opt_vars.given_init_t_vec;
-        for (int i = 0; i < opt_vars.given_init_ps.size(); i++) {
+        for (std::size_t i = 0; i < opt_vars.given_init_ps.size(); i++) {
             opt_vars.points.col(i) = opt_vars.given_init_ps[i];
         }
         opt_vars.ts = opt_vars.given_init_ts;
@@ -164,7 +146,7 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         return INFINITY;
     }
 
-    Eigen::VectorXd x = optimizer_.generateInitialGuess(spline_context_);
+    Eigen::VectorXd x = optimizer_.initialGuess();
     double minCostFunctional;
     lbfgs::lbfgs_parameter_t lbfgs_params;
     lbfgs_params.mem_size = 256;
@@ -204,11 +186,16 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     Eigen::VectorXd grad(x.size());
     minCostFunctional = evaluateCurrentSplineCost(x, grad);
     opt_vars.iter_num = optimizer_iters;
-    const SplineType *optimal_spline = &optimizer_.getWorkingSpline(spline_context_);
-    opt_vars.penalty_log(0) = (!opt_vars.block_energy_cost && optimal_spline != nullptr) ? optimal_spline->getEnergy() : 0.0;
+    if (!std::isfinite(minCostFunctional) || !optimizer_.lastStatus()) {
+        traj.clear();
+        return INFINITY;
+    }
+    opt_vars.penalty_log = integral_cost_.getPenaltyLog();
+    const auto &optimal_polynomial = optimizer_.polynomial();
+    opt_vars.penalty_log(0) = opt_vars.block_energy_cost ? 0.0 : optimizer_.energy();
 
-    const int aux_offset = opt_vars.temporalDim + opt_vars.spatialDim;
-    if (x.size() >= aux_offset + auxiliary_state_map_.getDimension()) {
+    const int aux_offset = optimizer_.layout().auxiliary_offset;
+    if (x.size() >= aux_offset + auxiliary_state_map_.dimension()) {
         const int tau_ts_idx = aux_offset + (opt_vars.uniform_time_en ? 1 : 0);
         opt_vars.ts = auxiliary_state_map_.decodeStartTime(x(tau_ts_idx));
     }
@@ -248,8 +235,8 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
 
     if (ret >= 0) {
-        if (optimal_spline != nullptr) {
-            traj = spline_opt::splineToSuperTrajectory(*optimal_spline);
+        if (optimal_polynomial.isValid()) {
+            traj = spline_opt::splineToSuperTrajectory(optimal_polynomial);
             opt_vars.times.resize(traj.getPieceNum());
             for (int i = 0; i < opt_vars.times.size(); ++i) {
                 opt_vars.times(i) = traj[i].getDuration();

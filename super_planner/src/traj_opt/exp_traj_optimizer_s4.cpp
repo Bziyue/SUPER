@@ -230,47 +230,13 @@ bool ExpTrajOpt::setupProblemAndCheck() {
         return false;
     }
 
-    const Mat3Df deltas = opt_vars.init_path.rightCols(opt_vars.piece_num)
-                          - opt_vars.init_path.leftCols(opt_vars.piece_num);
-    opt_vars.pieceIdx = (deltas.colwise().norm() / INFINITY).cast<int>().transpose();
-    opt_vars.pieceIdx.array() += 1;
-
-    opt_vars.temporalDim = opt_vars.piece_num;
-    opt_vars.spatialDim = 0;
+    // One spline segment belongs to each corridor; interior points use adjacent overlaps.
+    // Decision dimensions and offsets are owned exclusively by SplineOptimizer::layout().
     opt_vars.vPolyIdx.resize(opt_vars.piece_num - 1);
     opt_vars.hPolyIdx.resize(opt_vars.piece_num);
-
-    switch (cfg_.pos_constraint_type) {
-        case 1: {
-            for (int i = 0, j = 0, k; i < opt_vars.piece_num; i++) {
-                k = opt_vars.pieceIdx(i);
-                for (int l = 0; l < k; l++, j++) {
-                    if (l < k - 1) {
-                        opt_vars.vPolyIdx(j) = 2 * i;
-                    } else if (i < opt_vars.piece_num - 1) {
-                        opt_vars.vPolyIdx(j) = 2 * i + 1;
-                    }
-                    opt_vars.hPolyIdx(j) = i;
-                }
-            }
-            opt_vars.spatialDim = 3 * (opt_vars.piece_num - 1);
-            break;
-        }
-        default: {
-            for (int i = 0, j = 0, k; i < opt_vars.piece_num; i++) {
-                k = opt_vars.pieceIdx(i);
-                for (int l = 0; l < k; l++, j++) {
-                    if (l < k - 1) {
-                        opt_vars.vPolyIdx(j) = 2 * i;
-                        opt_vars.spatialDim += static_cast<int>(opt_vars.vPolytopes[2 * i].cols());
-                    } else if (i < opt_vars.piece_num - 1) {
-                        opt_vars.vPolyIdx(j) = 2 * i + 1;
-                        opt_vars.spatialDim += static_cast<int>(opt_vars.vPolytopes[2 * i + 1].cols());
-                    }
-                    opt_vars.hPolyIdx(j) = i;
-                }
-            }
-        }
+    for (int i = 0; i < opt_vars.piece_num; ++i) {
+        opt_vars.hPolyIdx(i) = i;
+        if (i + 1 < opt_vars.piece_num) opt_vars.vPolyIdx(i) = 2 * i + 1;
     }
 
     return true;
@@ -308,11 +274,9 @@ bool ExpTrajOpt::configureSplineProblem() {
                          opt_vars.penaltyWeights,
                          &opt_vars.quadrotor_flatness);
 
-    Optimizer::OptimizerConfig config;
-    config.spatial_map = &spatial_map_;
-    config.auxiliary_state_map = nullptr;
-    config.rho_energy = opt_vars.block_energy_cost ? 0.0 : 1.0;
-    config.integral_num_steps = opt_vars.integral_res;
+    SplineTrajectory::OptimizerOptions config;
+    config.energy_weight = opt_vars.block_energy_cost ? 0.0 : 1.0;
+    config.integration_steps = opt_vars.integral_res;
 
     spline_opt::WaypointsType waypoints(opt_vars.piece_num + 1, 3);
     waypoints.row(0) = opt_vars.headPVAJ.col(0).transpose();
@@ -329,19 +293,19 @@ bool ExpTrajOpt::configureSplineProblem() {
     bc.end_acceleration = opt_vars.tailPVAJ.col(2);
     bc.end_jerk = opt_vars.tailPVAJ.col(3);
 
-    Optimizer::ProblemDefinition problem;
-    problem.time_segments.assign(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
+    Optimizer::Problem problem;
+    problem.durations.assign(opt_vars.times.data(), opt_vars.times.data() + opt_vars.times.size());
     problem.waypoints = waypoints;
     problem.start_time = 0.0;
-    problem.bc = bc;
-    const auto prepare_status = optimizer_.prepareContext(problem, spline_context_, config);
-    return prepare_status.ok;
+    problem.boundary = bc;
+    const auto prepare_status = optimizer_.prepare(problem, config);
+    return static_cast<bool>(prepare_status);
 }
 
 double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
     ++opt_vars.iter_num;
-    const auto eval_spec = Optimizer::makeEvaluateSpec(time_cost_, integral_cost_);
-    const auto eval_result = optimizer_.evaluate(spline_context_, vars, grad, eval_spec);
+    Objective objective{time_cost_, integral_cost_, {spatial_map_}};
+    const auto eval_result = optimizer_.evaluate(vars, grad, objective);
     if (!eval_result) {
         grad.setZero();
         return INFINITY;
@@ -351,7 +315,6 @@ double ExpTrajOpt::evaluateCurrentSplineCost(const VecDf &vars, VecDf &grad) {
         grad.setZero();
         return INFINITY;
     }
-    spatial_map_.addNormPenalty(vars, opt_vars.temporalDim, opt_vars.spatialDim, grad, cost);
     if (opt_vars.iter_num == 1 && std::getenv("SUPER_EQUIVALENCE_TRACE") != nullptr) {
         std::cout << std::setprecision(17)
                   << "[EQ-FIRST] cost=" << cost << '\n'
@@ -378,7 +341,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     if (opt_vars.given_init_ts_and_ps) {
         opt_vars.times = opt_vars.init_ts;
-        for (int i = 0; i < opt_vars.init_ps.size(); i++) {
+        for (std::size_t i = 0; i < opt_vars.init_ps.size(); i++) {
             opt_vars.points.col(i) = opt_vars.init_ps[i];
         }
     }
@@ -387,7 +350,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         return INFINITY;
     }
 
-    VecDf x = optimizer_.generateInitialGuess(spline_context_);
+    VecDf x = optimizer_.initialGuess();
 
     opt_vars.init_ts = opt_vars.times;
     opt_vars.init_ps.clear();
@@ -425,19 +388,21 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                     this,
                                     lbfgs_params);
 
-    const auto sync_status = optimizer_.synchronizeWorkingState(spline_context_, x);
-    if (!sync_status) {
-        ret = -1;
+    // Reevaluate the accepted vector so diagnostics and output describe the same candidate.
+    const int optimizer_iters = opt_vars.iter_num;
+    VecDf final_gradient(x.size());
+    minCostFunctional = evaluateCurrentSplineCost(x, final_gradient);
+    opt_vars.iter_num = optimizer_iters;
+    if (!std::isfinite(minCostFunctional) || !optimizer_.lastStatus()) {
+        traj.clear();
+        return INFINITY;
     }
     opt_vars.penalty_log = integral_cost_.getPenaltyLog();
-    const SplineType *optimal_spline = &optimizer_.getWorkingSpline(spline_context_);
-    if (optimal_spline != nullptr) {
-        opt_vars.times.resize(optimal_spline->getTrajectory().getNumSegments());
-        for (int i = 0; i < opt_vars.times.size(); ++i) {
-            opt_vars.times(i) = optimal_spline->getTrajectory()[i].duration();
-        }
-    }
-    opt_vars.penalty_log(0) = (!opt_vars.block_energy_cost && optimal_spline != nullptr) ? optimal_spline->getEnergy() : 0.0;
+    const auto &optimal_polynomial = optimizer_.polynomial();
+    opt_vars.times.resize(optimal_polynomial.numSegments());
+    for (int i = 0; i < opt_vars.times.size(); ++i)
+        opt_vars.times(i) = optimal_polynomial[i].duration();
+    opt_vars.penalty_log(0) = opt_vars.block_energy_cost ? 0.0 : optimizer_.energy();
 
     if (cfg_.print_optimizer_log) {
         cout << " -- [ExpOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
@@ -474,8 +439,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
 
     if (ret >= 0) {
-        if (optimal_spline != nullptr) {
-            traj = spline_opt::splineToSuperTrajectory(*optimal_spline);
+        if (optimal_polynomial.isValid()) {
+            traj = spline_opt::splineToSuperTrajectory(optimal_polynomial);
             opt_vars.points.resize(3, std::max(0, opt_vars.piece_num - 1));
             for (int i = 0; i < opt_vars.points.cols(); ++i) {
                 opt_vars.points.col(i) = traj.getJuncPos(i + 1);

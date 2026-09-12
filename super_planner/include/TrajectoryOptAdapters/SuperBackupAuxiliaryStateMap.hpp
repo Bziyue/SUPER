@@ -1,157 +1,135 @@
 #pragma once
 
 #include "traj_opt/spline/SplineOptimizer.hpp"
-
 #include <TrajectoryOptComponents/TimeMapUtils.hpp>
 #include <data_structure/base/trajectory.h>
-#include <utils/header/type_utils.hpp>
 
 #include <algorithm>
-#include <vector>
+#include <numeric>
 
 namespace traj_opt_adapters
 {
+/** @brief Map uniform duration and switch-time coordinates to a backup trajectory.
+ * @note Owns an immutable reference polynomial snapshot. One active solve exclusively
+ *       owns this map; reset it before preparing a different backup problem. */
 class SuperBackupAuxiliaryStateMap
 {
 public:
-    using SepticSpline = SplineTrajectory::SepticSplineND<3>;
-    using Gradients = typename SepticSpline::Gradients;
-    using WaypointsType = typename SepticSpline::MatrixType;
-    using BoundaryConditions = SplineTrajectory::BoundaryConditions<3>;
+    using Spline = SplineTrajectory::SepticSplineND<3>;
 
-    void reset(const geometry_utils::Trajectory *traj,
-               double min_ts,
-               double max_ts,
-               double weight_ts,
-               bool uniform_time,
-               int piece_num,
-               double initial_ts)
+    /** @brief Prepare the reference snapshot and auxiliary-coordinate configuration.
+     * @param traj Non-null reference in local seconds; borrowed only during this call.
+     * @param min_ts Lower switch-time bound in reference-local seconds.
+     * @param max_ts Upper switch-time bound in reference-local seconds.
+     * @param weight_ts Nonnegative progress weight favoring later switches.
+     * @param uniform_time Whether one auxiliary coordinate controls all durations.
+     * @param piece_num Positive number of backup segments.
+     * @param initial_ts Initial switch time, clamped to the specified interval. */
+    void reset(const geometry_utils::Trajectory *traj, double min_ts, double max_ts,
+               double weight_ts, bool uniform_time, int piece_num, double initial_ts)
     {
-        reference_traj_ = traj;
+        if (!traj || traj->empty() || piece_num <= 0)
+            throw std::invalid_argument("Invalid backup reference or topology");
+        std::vector<double> knots{0.0};
+        knots.reserve(traj->size() + 1);
+        Spline::CoefficientMatrix coefficients =
+            Spline::CoefficientMatrix::Zero(traj->size() * Spline::kCoefficientCount, 3);
+        for (std::size_t i = 0; i < traj->size(); ++i)
+        {
+            const auto &piece = (*traj)[static_cast<int>(i)];
+            const auto &source = piece.getCoeffMat();
+            if (source.rows() != 3 || source.cols() <= 0 || source.cols() > Spline::kCoefficientCount)
+                throw std::invalid_argument("Unsupported backup reference degree");
+            coefficients.middleRows(i * Spline::kCoefficientCount, source.cols()) =
+                source.rowwise().reverse().transpose();
+            knots.push_back(knots.back() + piece.getDuration());
+        }
+        reference_ = Spline::Polynomial(knots, coefficients, Spline::kCoefficientCount);
+        if (!reference_.isValid()) throw std::invalid_argument("Invalid backup reference polynomial");
         min_ts_ = min_ts;
         max_ts_ = max_ts;
-        weight_ts_ = weight_ts;
+        weight_ts_ = std::max(0.0, weight_ts);
         uniform_time_ = uniform_time;
         piece_num_ = piece_num;
         initial_ts_ = initial_ts;
     }
 
-    int getDimension() const { return 1 + (uniform_time_ ? 1 : 0); }
+    int dimension() const { return 1 + (uniform_time_ ? 1 : 0); }
 
-    Eigen::VectorXd getInitialValue(const std::vector<double> &ref_times,
-                                    const WaypointsType & /*ref_waypoints*/,
-                                    double /*ref_start_time*/,
-                                    const BoundaryConditions & /*ref_bc*/) const
+    /** @brief Encode the reference total duration and bounded switch time; may allocate. */
+    Eigen::VectorXd initial(const SplineTrajectory::SplineProblem<Spline> &problem) const
     {
-        Eigen::VectorXd z(getDimension());
-        int idx = 0;
+        Eigen::VectorXd variables(dimension());
+        int index = 0;
         if (uniform_time_)
-        {
-            Eigen::VectorXd total_time(1);
-            total_time(0) = 0.0;
-            for (double t : ref_times)
-            {
-                total_time(0) += t;
-            }
-            Eigen::VectorXd tau_total;
-            traj_opt_components::TimeMapUtils::backwardMapTToTau(total_time, tau_total);
-            z(idx++) = tau_total(0);
-        }
-
-        double tau_ts = 0.0;
-        const double clamped_ts = std::min(std::max(initial_ts_, min_ts_), max_ts_);
-        traj_opt_components::TimeMapUtils::mapIntervalToInf(min_ts_, max_ts_, clamped_ts, tau_ts);
-        z(idx) = tau_ts;
-        return z;
+            variables(index++) = time_map_.toTau(
+                std::accumulate(problem.durations.begin(), problem.durations.end(), 0.0));
+        const double initial = std::clamp(initial_ts_, min_ts_, max_ts_);
+        traj_opt_components::TimeMapUtils::mapIntervalToInf(min_ts_, max_ts_, initial, variables(index));
+        return variables;
     }
 
-    void apply(const Eigen::VectorXd &z,
-               std::vector<double> &times,
-               WaypointsType &waypoints,
-               double & /*start_time*/,
-               BoundaryConditions &bc) const
+    /** @brief Decode durations and the reference P/V/A/J boundary without heap allocation.
+     * @param variables Prepared auxiliary coordinates, borrowed for this call.
+     * @param[in,out] state Physical backup parameters; topology and time origin stay fixed. */
+    void apply(const Eigen::Ref<const Eigen::VectorXd> &variables,
+               SplineTrajectory::MutableParameters<Spline> &state) const
     {
-        int idx = 0;
+        int index = 0;
         if (uniform_time_)
         {
-            Eigen::VectorXd tau_total(1);
-            tau_total(0) = z(idx++);
-            Eigen::VectorXd total_time;
-            traj_opt_components::TimeMapUtils::forwardMapTauToT(tau_total, total_time);
-            const double seg_time = total_time(0) / static_cast<double>(piece_num_);
-            for (int i = 0; i < static_cast<int>(times.size()); ++i)
-            {
-                times[i] = seg_time;
-            }
+            const double duration = time_map_.toTime(variables(index++)) / piece_num_;
+            std::fill(state.durations.begin(), state.durations.end(), duration);
         }
-
-        super_utils::StatePVAJ state;
-        reference_traj_->getState(decodeStartTime(z(idx)), state);
-        waypoints.row(0) = state.col(0).transpose();
-        bc.start_velocity = state.col(1);
-        bc.start_acceleration = state.col(2);
-        bc.start_jerk = state.col(3);
+        const auto boundary = reference_.evaluateDerivatives<3>(decodeStartTime(variables(index)));
+        state.waypoints.row(0) = boundary[0].transpose();
+        state.boundary.start_velocity = boundary[1];
+        state.boundary.start_acceleration = boundary[2];
+        state.boundary.start_jerk = boundary[3];
     }
 
-    double backward(const Eigen::VectorXd &z,
-                    const SepticSpline & /*spline*/,
-                    const std::vector<double> &times,
-                    const WaypointsType & /*waypoints*/,
-                    double /*start_time*/,
-                    const BoundaryConditions & /*bc*/,
-                    Gradients &grads,
-                    Eigen::VectorXd &grad_z) const
+    /** @brief Pull back total duration and the moving boundary, adding the progress cost.
+     * @param variables Prepared auxiliary coordinates.
+     * @param state Current physical trajectory; borrowed for this call.
+     * @param[in,out] gradient Accumulated physical derivatives; uniform time clears duration partials.
+     * @param[in,out] output Preallocated auxiliary derivatives, accumulated without resizing.
+     * @return Nonnegative linear progress cost; the backup time origin remains zero. */
+    double backward(const Eigen::Ref<const Eigen::VectorXd> &variables,
+                    const SplineTrajectory::ParameterView<Spline> & /*state*/,
+                    SplineTrajectory::ParameterGradient<Spline> &gradient,
+                    Eigen::Ref<Eigen::VectorXd> output) const
     {
-        grad_z.resize(getDimension());
-        grad_z.setZero();
-
-        int idx = 0;
+        int index = 0;
         if (uniform_time_)
         {
-            const double grad_total_time = grads.times.sum() / static_cast<double>(piece_num_);
-            Eigen::VectorXd tau_total(1);
-            tau_total(0) = z(idx);
-            Eigen::VectorXd grad_total(1);
-            grad_total(0) = grad_total_time;
-            Eigen::VectorXd grad_tau_total;
-            traj_opt_components::TimeMapUtils::propagateGradientTToTau(tau_total, grad_total, grad_tau_total);
-            grad_z(idx++) = grad_tau_total(0);
-            grads.times.setZero();
+            const double tau = variables(index);
+            output(index++) += time_map_.backward(tau, time_map_.toTime(tau),
+                                                  gradient.durations.sum() / piece_num_);
+            gradient.durations.setZero();
         }
-
-        const double tau_ts = z(idx);
-        const double ts = decodeStartTime(tau_ts);
-        double grad_ts =
-            grads.start.p.dot(reference_traj_->getVel(ts)) +
-            grads.start.v.dot(reference_traj_->getAcc(ts)) +
-            grads.start.a.dot(reference_traj_->getJer(ts)) +
-            grads.start.j.dot(reference_traj_->getSnap(ts));
-
-        double extra_cost = 0.0;
-        if (weight_ts_ > 0.0)
-        {
-            extra_cost += weight_ts_ * (max_ts_ - ts);
-            grad_ts -= weight_ts_;
-        }
-
-        traj_opt_components::TimeMapUtils::propagateGradIntervalToInf(min_ts_, max_ts_, tau_ts, grad_ts, grad_z(idx));
-        return extra_cost;
+        const double switch_time = decodeStartTime(variables(index));
+        const auto state = reference_.evaluateDerivatives<4>(switch_time);
+        const double partial = gradient.start.p.dot(state[1]) + gradient.start.v.dot(state[2]) +
+                               gradient.start.a.dot(state[3]) + gradient.start.j.dot(state[4]) - weight_ts_;
+        double mapped_partial;
+        traj_opt_components::TimeMapUtils::propagateGradIntervalToInf(
+            min_ts_, max_ts_, variables(index), partial, mapped_partial);
+        output(index) += mapped_partial;
+        return weight_ts_ * (max_ts_ - switch_time);
     }
 
-    double decodeStartTime(double tau_ts) const
+    double decodeStartTime(double variable) const
     {
-        double ts = initial_ts_;
-        traj_opt_components::TimeMapUtils::mapInfToInterval(min_ts_, max_ts_, tau_ts, ts);
-        return ts;
+        double time;
+        traj_opt_components::TimeMapUtils::mapInfToInterval(min_ts_, max_ts_, variable, time);
+        return time;
     }
 
 private:
-    const geometry_utils::Trajectory *reference_traj_ = nullptr;
-    double min_ts_ = 0.0;
-    double max_ts_ = 0.0;
-    double weight_ts_ = 0.0;
+    Spline::Polynomial reference_;
+    SplineTrajectory::QuadInvTimeMap time_map_;
+    double min_ts_ = 0.0, max_ts_ = 0.0, weight_ts_ = 0.0, initial_ts_ = 0.0;
     bool uniform_time_ = false;
     int piece_num_ = 1;
-    double initial_ts_ = 0.0;
 };
 } // namespace traj_opt_adapters

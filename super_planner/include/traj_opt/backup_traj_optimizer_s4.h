@@ -52,19 +52,26 @@ namespace traj_opt {
         using SplineType = spline_opt::SepticSpline;
         using SpatialMap = spline_opt::PolytopeSpatialMap;
         using AuxiliaryStateMap = spline_opt::BackupAuxiliaryStateMap;
-        using Optimizer = SplineTrajectory::SplineOptimizer<3,
-                                                            SplineType,
-                                                            SplineTrajectory::QuadInvTimeMap,
-                                                            SpatialMap,
-                                                            AuxiliaryStateMap>;
+        struct Parameterization
+        {
+            SplineTrajectory::QuadInvTimeMap time;
+            const SpatialMap &space;
+            const AuxiliaryStateMap &auxiliary;
+        };
+        using Optimizer = SplineTrajectory::SplineOptimizer<SplineType, Parameterization>;
+        struct Objective
+        {
+            const spline_opt::LinearTimeCost &duration;
+            const spline_opt::BackupPenaltyIntegralCost &integral;
+            spline_opt::DomainCost decision;
+        };
 
     private:
         traj_opt::Config cfg_;
         ros_interface::RosInterface::Ptr ros_ptr_;
-        Optimizer optimizer_;
-        Optimizer::OptimizationContext spline_context_;
         SpatialMap spatial_map_;
         AuxiliaryStateMap auxiliary_state_map_;
+        Optimizer optimizer_{Parameterization{{}, spatial_map_, auxiliary_state_map_}};
         spline_opt::LinearTimeCost time_cost_;
         spline_opt::BackupPenaltyIntegralCost integral_cost_;
 
@@ -101,7 +108,6 @@ namespace traj_opt {
             vec_E<Vec3f> guide_path;
             vector<double> guide_t;
 
-            int temporalDim, spatialDim;
 
             VecDf penalty_log;
 
